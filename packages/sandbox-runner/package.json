@@ -1,0 +1,17 @@
+{
+  "name": "@vibe-studio/sandbox-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sandbox execution environment for generated projects (Phase 4+)",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@vibe-studio/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

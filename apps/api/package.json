@@ -1,0 +1,28 @@
+{
+  "name": "@vibe-studio/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend API server",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "create-sample-pack": "tsx scripts/create-sample-pack.ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@vibe-studio/shared": "workspace:*",
+    "fastify": "^4.28.0",
+    "@fastify/cors": "^9.0.0",
+    "@fastify/multipart": "^8.3.0",
+    "adm-zip": "^0.5.16",
+    "nanoid": "^5.1.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^18.19.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
