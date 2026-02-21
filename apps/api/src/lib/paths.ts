@@ -6,6 +6,13 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 // Storage root: <monorepo>/storage
 export const STORAGE_ROOT = resolve(__dirname, "../../../..", "storage");
 
+// Templates root: <monorepo>/templates
+export const TEMPLATES_ROOT = resolve(__dirname, "../../../..", "templates");
+
+export function templateDir(templateName: string): string {
+  return join(TEMPLATES_ROOT, templateName);
+}
+
 export function projectDir(projectId: string): string {
   return join(STORAGE_ROOT, "projects", projectId);
 }

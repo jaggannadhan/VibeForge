@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
   "description": "Sandbox execution environment for generated projects (Phase 4+)",
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -12,6 +20,7 @@
     "@vibe-studio/shared": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^18.19.0",
     "typescript": "^5.5.0"
   }
 }

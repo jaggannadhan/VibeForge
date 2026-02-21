@@ -15,20 +15,33 @@ import {
 
 interface FileTreePaneProps {
   projectId: string;
+  refreshKey?: number;
 }
 
-export function FileTreePane({ projectId }: FileTreePaneProps) {
+export function FileTreePane({ projectId, refreshKey }: FileTreePaneProps) {
   const [files, setFiles] = useState<FileTreeNode[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getFileTree(projectId).then((res) => {
-      setFiles(res.files);
-      setLoading(false);
-    });
-  }, [projectId]);
+    let stale = false;
+    setLoading(true);
+    getFileTree(projectId)
+      .then((res) => {
+        if (!stale) {
+          setFiles(res.files);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!stale) {
+          setFiles([]);
+          setLoading(false);
+        }
+      });
+    return () => { stale = true; };
+  }, [projectId, refreshKey]);
 
   const handleSelectFile = useCallback(
     async (path: string) => {

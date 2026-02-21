@@ -50,6 +50,12 @@ export type {
   Tolerance,
 } from "./contracts/designPack";
 
+// Types — WebSocket
+export type {
+  ServerWsMessage,
+  ClientWsMessage,
+} from "./contracts/ws";
+
 // Types — API
 export type {
   FileTreeNode,

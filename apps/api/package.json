@@ -5,16 +5,19 @@
   "type": "module",
   "description": "Backend API server",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch --env-file=.env src/server.ts",
     "create-sample-pack": "tsx scripts/create-sample-pack.ts",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@vibe-studio/shared": "workspace:*",
+    "@vibe-studio/sandbox-runner": "workspace:*",
     "fastify": "^4.28.0",
     "@fastify/cors": "^9.0.0",
     "@fastify/multipart": "^8.3.0",
+    "@fastify/websocket": "^10.0.0",
+    "@anthropic-ai/sdk": "^0.39.0",
     "adm-zip": "^0.5.16",
     "nanoid": "^5.1.0",
     "zod": "^3.24.0"

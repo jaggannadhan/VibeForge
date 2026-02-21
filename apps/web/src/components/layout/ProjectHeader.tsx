@@ -9,6 +9,10 @@ interface ProjectHeaderProps {
   projectName?: string;
   uploading?: boolean;
   onDesignPackUploaded?: (file: File) => void;
+  canRun?: boolean;
+  runActive?: boolean;
+  onRun?: () => void;
+  onStop?: () => void;
 }
 
 export function ProjectHeader({
@@ -16,6 +20,10 @@ export function ProjectHeader({
   projectName = "Untitled Project",
   uploading = false,
   onDesignPackUploaded,
+  canRun = false,
+  runActive = false,
+  onRun,
+  onStop,
 }: ProjectHeaderProps) {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -88,14 +96,28 @@ export function ProjectHeader({
         {uploading ? "Uploading..." : "Upload Design Pack"}
       </button>
 
-      {/* Run / Stop (disabled until Phase 8) */}
-      <button
-        disabled
-        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-sm opacity-50 cursor-not-allowed"
-      >
-        <Play size={14} />
-        Run
-      </button>
+      {/* Run / Stop */}
+      {runActive ? (
+        <button
+          onClick={onStop}
+          className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground shadow-sm transition-colors hover:bg-destructive/90"
+        >
+          <Square size={14} />
+          Stop
+        </button>
+      ) : (
+        <button
+          disabled={!canRun}
+          onClick={onRun}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90",
+            !canRun && "opacity-50 cursor-not-allowed"
+          )}
+        >
+          <Play size={14} />
+          Run
+        </button>
+      )}
     </header>
   );
 }

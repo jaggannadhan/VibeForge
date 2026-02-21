@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import AdmZip from "adm-zip";
@@ -27,6 +27,16 @@ export async function processDesignPack(
   const zip = new AdmZip(zipBuffer);
   zip.extractAllTo(packDir, true);
 
+  // Remove macOS resource fork junk
+  const macosDir = join(packDir, "__MACOSX");
+  if (existsSync(macosDir)) {
+    await rm(macosDir, { recursive: true });
+  }
+
+  // Unwrap single root folder: if the zip contained one directory with
+  // the actual files inside it, hoist those files up to packDir.
+  await unwrapSingleRootFolder(packDir);
+
   // Validate
   const validation = await validateDesignPack(packDir);
 
@@ -50,6 +60,34 @@ export async function processDesignPack(
   );
 
   return { meta, validation };
+}
+
+/**
+ * If the extracted directory contains exactly one subdirectory (and no
+ * other files besides pack-meta.json), move its contents up to the parent.
+ * This handles zips where macOS Finder wraps everything in a folder.
+ */
+async function unwrapSingleRootFolder(packDir: string): Promise<void> {
+  const entries = await readdir(packDir, { withFileTypes: true });
+
+  // Filter out pack-meta.json (our own file) to find what the zip contained
+  const zipEntries = entries.filter((e) => e.name !== "pack-meta.json");
+
+  // Only unwrap if there's exactly one directory and nothing else
+  if (zipEntries.length !== 1 || !zipEntries[0].isDirectory()) return;
+
+  const wrapperDir = join(packDir, zipEntries[0].name);
+  const innerEntries = await readdir(wrapperDir);
+
+  // Move each item from wrapper into packDir
+  for (const name of innerEntries) {
+    const src = join(wrapperDir, name);
+    const dest = join(packDir, name);
+    await rename(src, dest);
+  }
+
+  // Remove the now-empty wrapper directory
+  await rm(wrapperDir, { recursive: true });
 }
 
 async function collectBaselineImages(

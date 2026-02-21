@@ -1,9 +1,11 @@
 "use client";
 
-import type { AgentEvent, IterationNode } from "@vibe-studio/shared";
-import { MOCK_TRACE_TREE, createMockEventStream } from "./mock-data";
+import { useEffect, useRef, useState, useCallback } from "react";
+import type { AgentEvent, IterationNode, ServerWsMessage } from "@vibe-studio/shared";
 
-type TraceUpdateHandler = (tree: IterationNode) => void;
+const WS_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/^http/, "ws") || "ws://localhost:3001/api";
+
+// ── Tree helpers ─────────────────────────────────────────────────────
 
 function deepClone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj));
@@ -23,7 +25,23 @@ function findNode(
   return undefined;
 }
 
-function applyEvent(tree: IterationNode, event: AgentEvent): IterationNode {
+function applyEvent(
+  tree: IterationNode | null,
+  event: AgentEvent
+): IterationNode {
+  // If tree doesn't exist yet, create root from the first event
+  if (!tree) {
+    return {
+      nodeId: event.nodeId,
+      iterationIndex: 0,
+      stepKey: event.payload.stepKey || "run",
+      title: event.payload.title || event.nodeId,
+      status: event.payload.status || "running",
+      startedAt: event.ts,
+      children: [],
+    };
+  }
+
   const updated = deepClone(tree);
   const node = findNode(updated, event.nodeId);
 
@@ -81,62 +99,90 @@ function applyEvent(tree: IterationNode, event: AgentEvent): IterationNode {
   return updated;
 }
 
-export class MockTraceStream {
-  private handlers: Set<TraceUpdateHandler> = new Set();
-  private tree: IterationNode;
-  private timers: ReturnType<typeof setTimeout>[] = [];
-  private running = false;
+// ── useTraceStream hook ──────────────────────────────────────────────
 
-  constructor() {
-    this.tree = deepClone(MOCK_TRACE_TREE);
-  }
-
-  subscribe(handler: TraceUpdateHandler): () => void {
-    this.handlers.add(handler);
-    // Immediately emit current state
-    handler(deepClone(this.tree));
-    return () => {
-      this.handlers.delete(handler);
-    };
-  }
-
-  start(): void {
-    if (this.running) return;
-    this.running = true;
-
-    const events = createMockEventStream();
-    const baseTime = Date.now();
-
-    events.forEach((event, index) => {
-      const eventTime = new Date(event.ts).getTime();
-      const delayMs = Math.max(0, eventTime - baseTime);
-
-      const timer = setTimeout(() => {
-        this.tree = applyEvent(this.tree, event);
-        this.handlers.forEach((handler) => handler(deepClone(this.tree)));
-      }, delayMs);
-
-      this.timers.push(timer);
-    });
-  }
-
-  stop(): void {
-    this.running = false;
-    this.timers.forEach(clearTimeout);
-    this.timers = [];
-  }
-
-  getTree(): IterationNode {
-    return deepClone(this.tree);
-  }
+export interface TraceStreamState {
+  tree: IterationNode | null;
+  runStatus: "idle" | "running" | "success" | "error";
 }
 
-// Singleton for the demo
-let instance: MockTraceStream | null = null;
+export function useTraceStream(
+  projectId: string,
+  runActive: boolean
+): TraceStreamState {
+  const [tree, setTree] = useState<IterationNode | null>(null);
+  const [runStatus, setRunStatus] = useState<TraceStreamState["runStatus"]>("idle");
+  const wsRef = useRef<WebSocket | null>(null);
+  const treeRef = useRef<IterationNode | null>(null);
 
-export function getMockTraceStream(): MockTraceStream {
-  if (!instance) {
-    instance = new MockTraceStream();
-  }
-  return instance;
+  // Reset tree when a new run starts
+  const prevRunActive = useRef(false);
+  useEffect(() => {
+    if (runActive && !prevRunActive.current) {
+      treeRef.current = null;
+      setTree(null);
+      setRunStatus("running");
+    }
+    prevRunActive.current = runActive;
+  }, [runActive]);
+
+  const handleMessage = useCallback((data: string) => {
+    try {
+      const msg = JSON.parse(data) as ServerWsMessage;
+
+      switch (msg.type) {
+        case "agentEvent": {
+          const updated = applyEvent(treeRef.current, msg.event);
+          treeRef.current = updated;
+          setTree(updated);
+          break;
+        }
+        case "runStarted":
+          setRunStatus("running");
+          break;
+        case "runFinished":
+          setRunStatus(msg.status === "success" ? "success" : "error");
+          break;
+        case "error":
+          // Server error message (e.g. pong)
+          break;
+      }
+    } catch {
+      // Ignore unparseable messages
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!runActive) {
+      // Close existing connection when run is not active
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      return;
+    }
+
+    const url = `${WS_URL}/projects/${projectId}/ws`;
+    const ws = new WebSocket(url);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      handleMessage(event.data);
+    };
+
+    ws.onerror = () => {
+      setRunStatus("error");
+    };
+
+    ws.onclose = () => {
+      wsRef.current = null;
+    };
+
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [projectId, runActive, handleMessage]);
+
+  return { tree, runStatus };
 }

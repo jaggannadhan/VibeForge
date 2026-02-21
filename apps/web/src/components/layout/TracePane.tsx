@@ -1,34 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { IterationNode } from "@vibe-studio/shared";
+import { useEffect, useRef } from "react";
 import { Activity } from "lucide-react";
-import { getMockTraceStream } from "@/lib/ws";
+import { useTraceStream } from "@/lib/ws";
 import { TraceTree } from "@/components/trace/TraceTree";
 
 interface TracePaneProps {
   projectId: string;
+  runActive?: boolean;
+  onRunComplete?: () => void;
 }
 
-export function TracePane({ projectId }: TracePaneProps) {
-  const [traceTree, setTraceTree] = useState<IterationNode | null>(null);
+export function TracePane({ projectId, runActive = false, onRunComplete }: TracePaneProps) {
+  const { tree, runStatus } = useTraceStream(projectId, runActive);
 
+  // Fire onRunComplete when runStatus transitions to "success"
+  const prevStatus = useRef(runStatus);
   useEffect(() => {
-    const stream = getMockTraceStream();
-    const unsubscribe = stream.subscribe((tree) => {
-      setTraceTree(tree);
-    });
+    if (runStatus === "success" && prevStatus.current !== "success") {
+      onRunComplete?.();
+    }
+    prevStatus.current = runStatus;
+  }, [runStatus, onRunComplete]);
 
-    // Start the simulation after a short delay
-    const timer = setTimeout(() => {
-      stream.start();
-    }, 2000);
-
-    return () => {
-      unsubscribe();
-      clearTimeout(timer);
-    };
-  }, [projectId]);
+  const isLive = runStatus === "running";
 
   return (
     <div className="flex h-full flex-col">
@@ -37,15 +32,21 @@ export function TracePane({ projectId }: TracePaneProps) {
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Agent Trace
         </span>
-        {traceTree?.status === "running" && (
+        {isLive && (
           <span className="ml-auto flex items-center gap-1 text-xs text-blue-600">
             <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
             Live
           </span>
         )}
+        {runStatus === "success" && (
+          <span className="ml-auto text-xs text-green-600">Complete</span>
+        )}
+        {runStatus === "error" && (
+          <span className="ml-auto text-xs text-red-600">Error</span>
+        )}
       </div>
       <div className="flex-1 overflow-hidden">
-        <TraceTree rootNode={traceTree} />
+        <TraceTree rootNode={tree} />
       </div>
     </div>
   );

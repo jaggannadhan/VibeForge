@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { ProjectHeader } from "./ProjectHeader";
 import { ThreePaneLayout } from "./ThreePaneLayout";
-import { createProject, uploadDesignPack } from "@/lib/api";
+import { Spinner } from "@/components/common/Spinner";
+import { createProject, uploadDesignPack, startRun, stopRun } from "@/lib/api";
 
 interface ProjectWorkspaceProps {
   initialProjectId: string;
@@ -16,30 +17,41 @@ interface UploadResult {
   message?: string;
 }
 
+const PLACEHOLDER_SLUGS = new Set(["demo", "new"]);
+
 export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
-  const [projectId, setProjectId] = useState(initialProjectId);
+  const needsAutoCreate = PLACEHOLDER_SLUGS.has(initialProjectId);
+  const [projectId, setProjectId] = useState<string | null>(
+    needsAutoCreate ? null : initialProjectId
+  );
   const [projectName, setProjectName] = useState("Untitled Project");
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [fileTreeRefreshKey, setFileTreeRefreshKey] = useState(0);
+  const [activePackId, setActivePackId] = useState<string | null>(null);
+  const [runActive, setRunActive] = useState(false);
+  const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
+  const [previewAutoStart, setPreviewAutoStart] = useState(false);
+  const [targetRoute, setTargetRoute] = useState("/");
 
-  // Auto-create a real project for "demo" or "new" slugs
+  // Auto-create a real project for placeholder slugs
   useEffect(() => {
-    if (initialProjectId === "demo" || initialProjectId === "new") {
+    if (needsAutoCreate) {
       createProject("Dashboard App")
         .then((res) => {
           setProjectId(res.projectId);
           setProjectName(res.name);
-          // Update URL without full navigation
           window.history.replaceState(null, "", `/projects/${res.projectId}`);
         })
         .catch((err) => {
           console.error("Failed to create project:", err);
         });
     }
-  }, [initialProjectId]);
+  }, [needsAutoCreate]);
 
   const handleDesignPackUpload = useCallback(
     async (file: File) => {
+      if (!projectId) return;
       setUploading(true);
       setUploadResult(null);
 
@@ -58,6 +70,9 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
             packId: result.packId,
             message: `Design pack ${result.packId} uploaded successfully.`,
           });
+          setActivePackId(result.packId);
+          if (result.defaultRoute) setTargetRoute(result.defaultRoute);
+          setFileTreeRefreshKey((prev) => prev + 1);
         }
       } catch (err) {
         setUploadResult({
@@ -73,6 +88,45 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
 
   const dismissResult = () => setUploadResult(null);
 
+  const handleRun = useCallback(async () => {
+    if (!projectId || !activePackId) return;
+    try {
+      await startRun(projectId, activePackId);
+      setRunActive(true);
+    } catch (err) {
+      console.error("Failed to start run:", err);
+    }
+  }, [projectId, activePackId]);
+
+  const handleStop = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      await stopRun(projectId);
+      setRunActive(false);
+    } catch (err) {
+      console.error("Failed to stop run:", err);
+    }
+  }, [projectId]);
+
+  const handleRunComplete = useCallback(() => {
+    setRunActive(false);
+    setFileTreeRefreshKey((prev) => prev + 1);
+    setPreviewAutoStart(true);
+    setPreviewRefreshKey((prev) => prev + 1);
+  }, []);
+
+  // Show a loading state while the project is being created
+  if (!projectId) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <Spinner size={24} />
+          <p className="text-sm text-muted-foreground">Creating project...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden">
       <ProjectHeader
@@ -80,6 +134,10 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
         projectName={projectName}
         uploading={uploading}
         onDesignPackUploaded={handleDesignPackUpload}
+        canRun={!!activePackId}
+        runActive={runActive}
+        onRun={handleRun}
+        onStop={handleStop}
       />
 
       {/* Upload result banner */}
@@ -114,7 +172,15 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
       )}
 
       <div className="flex-1 overflow-hidden">
-        <ThreePaneLayout projectId={projectId} />
+        <ThreePaneLayout
+          projectId={projectId}
+          fileTreeRefreshKey={fileTreeRefreshKey}
+          runActive={runActive}
+          onRunComplete={handleRunComplete}
+          previewAutoStart={previewAutoStart}
+          previewRefreshKey={previewRefreshKey}
+          previewRoute={targetRoute}
+        />
       </div>
     </div>
   );

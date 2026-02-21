@@ -1,10 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, cp } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import {
   projectDir,
   projectMetaPath,
   workspaceDir,
   artifactsDir,
+  templateDir,
 } from "../lib/paths.js";
 
 export interface ProjectMeta {
@@ -26,6 +27,12 @@ export async function createProject(
   // Create artifact subdirectories
   for (const sub of ["design-packs", "snapshots", "reports", "logs"]) {
     await mkdir(`${artifactsDir(projectId)}/${sub}`, { recursive: true });
+  }
+
+  // Copy starter template into workspace
+  const tmplSrc = templateDir("nextjs-tailwind-shadcn");
+  if (existsSync(tmplSrc)) {
+    await cp(tmplSrc, workspaceDir(projectId), { recursive: true });
   }
 
   const now = new Date().toISOString();

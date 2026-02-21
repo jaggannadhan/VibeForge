@@ -2,9 +2,9 @@ import type {
   GetProjectResponse,
   GetFileTreeResponse,
   GetFileContentResponse,
+  StartRunResponse,
+  GetRunReportResponse,
 } from "@vibe-studio/shared";
-import { MOCK_FILE_TREE, MOCK_FILE_CONTENTS } from "./mock-data";
-
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -24,7 +24,7 @@ export async function createProject(name: string): Promise<{ projectId: string; 
 export async function uploadDesignPack(
   projectId: string,
   file: File
-): Promise<{ packId: string; projectId: string; validationErrors?: string[] }> {
+): Promise<{ packId: string; projectId: string; validationErrors?: string[]; defaultRoute?: string }> {
   const form = new FormData();
   form.append("file", file);
 
@@ -51,7 +51,7 @@ export async function getDesignPack(
   return res.json();
 }
 
-// ── Mock data (until Phase 3+) ─────────────────────────────────────
+// ── Mock data (until later phases) ──────────────────────────────────
 
 export async function getProject(projectId: string): Promise<GetProjectResponse> {
   await delay(200);
@@ -71,30 +71,78 @@ export async function getProject(projectId: string): Promise<GetProjectResponse>
   };
 }
 
+// ── Real file API (Phase 3) ─────────────────────────────────────────
+
 export async function getFileTree(projectId: string): Promise<GetFileTreeResponse> {
-  await delay(150);
-  return {
-    projectId,
-    files: MOCK_FILE_TREE,
-  };
+  const res = await fetch(`${API_URL}/projects/${projectId}/files`);
+  if (!res.ok) throw new Error(`Failed to get file tree: ${res.status}`);
+  return res.json();
 }
 
 export async function getFileContent(
   projectId: string,
   filePath: string
 ): Promise<GetFileContentResponse> {
-  await delay(100);
-  const file = MOCK_FILE_CONTENTS[filePath];
-  if (!file) {
-    return {
-      path: filePath,
-      content: `// File: ${filePath}\n// Content not available in mock`,
-      language: "typescript",
-    };
-  }
-  return {
-    path: file.path,
-    content: file.content,
-    language: file.language,
-  };
+  const res = await fetch(`${API_URL}/projects/${projectId}/files/${filePath}`);
+  if (!res.ok) throw new Error(`Failed to get file content: ${res.status}`);
+  return res.json();
+}
+
+// ── Preview API (Phase 4) ───────────────────────────────────────────
+
+export interface PreviewInfo {
+  previewUrl: string | null;
+  status: "installing" | "starting" | "ready" | "stopped" | "error";
+  error?: string;
+}
+
+export async function startPreview(projectId: string): Promise<PreviewInfo> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/preview/start`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`Failed to start preview: ${res.status}`);
+  return res.json();
+}
+
+export async function stopPreview(projectId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/preview/stop`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`Failed to stop preview: ${res.status}`);
+}
+
+export async function getPreviewStatus(projectId: string): Promise<PreviewInfo> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/preview`);
+  if (!res.ok) throw new Error(`Failed to get preview status: ${res.status}`);
+  return res.json();
+}
+
+// ── Run API (Phase 5) ────────────────────────────────────────────────
+
+export async function startRun(
+  projectId: string,
+  packId: string
+): Promise<StartRunResponse> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ packId }),
+  });
+  if (!res.ok) throw new Error(`Failed to start run: ${res.status}`);
+  return res.json();
+}
+
+export async function stopRun(projectId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/runs/stop`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`Failed to stop run: ${res.status}`);
+}
+
+export async function getRunReport(
+  projectId: string
+): Promise<GetRunReportResponse> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/runs/report`);
+  if (!res.ok) throw new Error(`Failed to get run report: ${res.status}`);
+  return res.json();
 }

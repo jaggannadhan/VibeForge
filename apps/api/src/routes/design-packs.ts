@@ -1,5 +1,9 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
+import { ManifestSchema } from "@vibe-studio/shared";
 import { newPackId } from "../lib/ids.js";
+import { designPackDir } from "../lib/paths.js";
 import { getProject } from "../services/project-service.js";
 import {
   processDesignPack,
@@ -47,9 +51,23 @@ export async function designPackRoutes(app: FastifyInstance): Promise<void> {
           });
         }
 
+        // Read manifest to extract the default target route
+        let defaultRoute = "/";
+        try {
+          const packDir = designPackDir(projectId, packId);
+          const manifestRaw = await readFile(join(packDir, "manifest.json"), "utf-8");
+          const manifest = ManifestSchema.parse(JSON.parse(manifestRaw));
+          const targetId = manifest.runDefaults.targetId;
+          const target = manifest.targets.find((t) => t.targetId === targetId);
+          if (target) defaultRoute = target.route;
+        } catch {
+          // Fall back to "/" if manifest can't be read
+        }
+
         return reply.status(201).send({
           packId: meta.packId,
           projectId: meta.projectId,
+          defaultRoute,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
