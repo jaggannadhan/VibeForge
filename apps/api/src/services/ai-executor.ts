@@ -7,10 +7,11 @@ import {
   DesignIrSchema,
 } from "@vibe-studio/shared";
 import type { AgentEvent } from "@vibe-studio/shared";
-import type { Executor, ExecutorOptions } from "./executor.js";
+import type { Executor, ExecutorOptions, PreviewProvider } from "./executor.js";
 import { designPackDir } from "../lib/paths.js";
 import { buildCodeGenPrompt } from "./prompt-builder.js";
 import { parseGeneratedFiles } from "./response-parser.js";
+import { ScreenshotService } from "./screenshot-service.js";
 
 const MODEL = "claude-sonnet-4-20250514";
 const MAX_TOKENS = 8192;
@@ -42,6 +43,7 @@ export class AiExecutor extends EventEmitter implements Executor {
     const codeGenId = "root-codegen";
     const screenshotId = "root-screenshot";
     const scoringId = "root-scoring";
+    let currentStep: "codeGen" | "screenshot" | "scoring" = "codeGen";
 
     try {
       // ── Root node ───────────────────────────────────────────────
@@ -220,7 +222,9 @@ export class AiExecutor extends EventEmitter implements Executor {
         });
       }
 
-      // ── Screenshot step (stub) ─────────────────────────────────
+      // ── Screenshot step ─────────────────────────────────────────
+      currentStep = "screenshot";
+      console.log("[AiExecutor] Starting screenshot step");
       this.emitEvent(projectId, packId, screenshotId, "nodeCreated", {
         stepKey: "screenshot",
         title: "Screenshot Capture",
@@ -232,23 +236,111 @@ export class AiExecutor extends EventEmitter implements Executor {
         status: "running",
       });
 
-      await delay(500);
       if (this.stopped) return;
 
+      if (!options.previewProvider) {
+        throw new Error(
+          "No preview provider available — cannot capture screenshots"
+        );
+      }
+
+      // Ensure preview server is running
+      console.log("[AiExecutor] Waiting for preview server...");
       this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
-        message: `Capturing viewport at ${manifest.breakpoints[0]?.width || 1440}x${manifest.breakpoints[0]?.height || 900}...`,
-        progressPct: 50,
+        message: "Waiting for preview server...",
+        progressPct: 10,
       });
 
-      await delay(500);
+      const previewUrl = await this.waitForPreview(
+        options.previewProvider,
+        projectId,
+        workspacePath
+      );
+      console.log("[AiExecutor] Preview ready at", previewUrl);
+
       if (this.stopped) return;
 
+      // Create child nodes for each breakpoint before starting
+      console.log(`[AiExecutor] Launching browser for ${manifest.breakpoints.length} breakpoint(s)`);
+      this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+        message: `Launching browser for ${manifest.breakpoints.length} breakpoint(s)...`,
+        progressPct: 20,
+      });
+
+      for (const bp of manifest.breakpoints) {
+        this.emitEvent(projectId, packId, `${screenshotId}-${bp.breakpointId}`, "nodeCreated", {
+          stepKey: "capture",
+          title: `${bp.breakpointId} (${bp.width}×${bp.height})`,
+          status: "queued",
+        });
+      }
+
+      let capturedCount = 0;
+      let failedCount = 0;
+
+      const screenshotService = new ScreenshotService();
+      const screenshotResults = await screenshotService.capture({
+        projectId,
+        runId,
+        previewUrl,
+        route: manifestTarget.route,
+        breakpoints: manifest.breakpoints,
+        onProgress: (breakpointId, index, total) => {
+          const nodeId = `${screenshotId}-${breakpointId}`;
+          this.emitEvent(projectId, packId, nodeId, "nodeStarted", {
+            stepKey: "capture",
+            title: `${breakpointId}`,
+            status: "running",
+          });
+          const pct = 20 + Math.round(((index + 1) / total) * 70);
+          this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+            message: `Capturing ${breakpointId} (${index + 1}/${total})...`,
+            progressPct: pct,
+          });
+        },
+        onCaptured: (breakpointId, result, error) => {
+          const nodeId = `${screenshotId}-${breakpointId}`;
+          if (result) {
+            capturedCount++;
+            this.emitEvent(projectId, packId, nodeId, "nodeFinished", {
+              status: "success",
+              message: `${(result.sizeBytes / 1024).toFixed(0)} KB`,
+            });
+            // Emit artifact link under the child node
+            this.emitEvent(projectId, packId, nodeId, "artifactAdded", {
+              artifact: {
+                id: `screenshot-${breakpointId}`,
+                kind: "snapshotImage",
+                label: `${breakpointId}.png`,
+                href: `/api/projects/${projectId}/artifacts/screenshots/${runId}/${breakpointId}.png`,
+                mime: "image/png",
+                sizeBytes: result.sizeBytes,
+              },
+            });
+          } else {
+            failedCount++;
+            this.emitEvent(projectId, packId, nodeId, "nodeFailed", {
+              status: "error",
+              message: error || "Capture failed",
+            });
+          }
+        },
+      });
+
+      if (this.stopped) return;
+
+      const totalMsg = failedCount > 0
+        ? `Captured ${capturedCount}/${capturedCount + failedCount} screenshot(s), ${failedCount} failed`
+        : `Captured ${capturedCount} screenshot(s)`;
+      const overallStatus = failedCount > 0 && capturedCount === 0 ? "error" : "success";
+
       this.emitEvent(projectId, packId, screenshotId, "nodeFinished", {
-        status: "success",
-        message: "Screenshot captured (stub)",
+        status: overallStatus,
+        message: totalMsg,
       });
 
       // ── Scoring step (stub) ─────────────────────────────────────
+      currentStep = "scoring";
       this.emitEvent(projectId, packId, scoringId, "nodeCreated", {
         stepKey: "scoring",
         title: "Visual Scoring",
@@ -290,9 +382,20 @@ export class AiExecutor extends EventEmitter implements Executor {
 
       const message =
         error instanceof Error ? error.message : String(error);
-      console.error("[AiExecutor] Error:", message);
+      console.error(`[AiExecutor] Error in step "${currentStep}":`, message);
+      if (error instanceof Error && error.stack) {
+        console.error("[AiExecutor] Stack:", error.stack);
+      }
 
-      this.emitEvent(projectId, packId, codeGenId, "nodeFailed", {
+      // Fail the node corresponding to the current step
+      const failNodeId =
+        currentStep === "screenshot"
+          ? screenshotId
+          : currentStep === "scoring"
+            ? scoringId
+            : codeGenId;
+
+      this.emitEvent(projectId, packId, failNodeId, "nodeFailed", {
         status: "error",
         message,
       });
@@ -303,6 +406,44 @@ export class AiExecutor extends EventEmitter implements Executor {
 
       this.emit("done", "error");
     }
+  }
+
+  // ── Preview helpers ──────────────────────────────────────────────
+
+  private async waitForPreview(
+    previewProvider: PreviewProvider,
+    projectId: string,
+    workspacePath: string,
+    timeoutMs = 120_000
+  ): Promise<string> {
+    console.log("[AiExecutor] Calling previewProvider.startPreview...");
+    await previewProvider.startPreview(projectId, workspacePath);
+    console.log("[AiExecutor] startPreview returned, polling for ready...");
+
+    const start = Date.now();
+    let loggedStatus = "";
+    while (Date.now() - start < timeoutMs) {
+      if (this.stopped) throw new Error("Executor stopped");
+
+      const info = previewProvider.getPreviewStatus(projectId);
+      if (info.status !== loggedStatus) {
+        console.log(`[AiExecutor] Preview status: ${info.status} (url: ${info.previewUrl})`);
+        loggedStatus = info.status;
+      }
+      if (info.status === "ready" && info.previewUrl) {
+        return info.previewUrl;
+      }
+      if (info.status === "error") {
+        throw new Error(
+          `Preview failed to start: ${(info as { error?: string }).error || "unknown error"}`
+        );
+      }
+      await delay(1000);
+    }
+
+    throw new Error(
+      `Preview did not become ready within ${timeoutMs}ms`
+    );
   }
 
   // ── Event helpers ─────────────────────────────────────────────────

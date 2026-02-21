@@ -1,11 +1,22 @@
 import type { EventEmitter } from "node:events";
 import type { AgentEvent } from "@vibe-studio/shared";
 
+export interface PreviewProvider {
+  startPreview(
+    projectId: string,
+    workspacePath: string
+  ): Promise<{ previewUrl: string | null; status: string }>;
+  getPreviewStatus(
+    projectId: string
+  ): { previewUrl: string | null; status: string };
+}
+
 export interface ExecutorOptions {
   projectId: string;
   packId: string;
   workspacePath: string;
   runId: string;
+  previewProvider?: PreviewProvider;
 }
 
 export interface Executor extends EventEmitter {

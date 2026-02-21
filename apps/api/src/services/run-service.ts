@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { nanoid } from "nanoid";
 import type { AgentEvent, IterationNode, TraceStatus } from "@vibe-studio/shared";
 import { AiExecutor } from "./ai-executor.js";
-import type { Executor } from "./executor.js";
+import type { Executor, PreviewProvider } from "./executor.js";
 
 export interface RunState {
   runId: string;
@@ -24,6 +24,13 @@ export interface RunState {
  */
 export class RunService extends EventEmitter {
   private runs = new Map<string, RunState & { executor: Executor }>();
+  private eventBuffers = new Map<string, AgentEvent[]>();
+  private previewProvider: PreviewProvider | undefined;
+
+  constructor(options?: { previewProvider?: PreviewProvider }) {
+    super();
+    this.previewProvider = options?.previewProvider;
+  }
 
   startRun(
     projectId: string,
@@ -51,10 +58,12 @@ export class RunService extends EventEmitter {
     };
 
     this.runs.set(projectId, state);
+    this.eventBuffers.set(projectId, []);
 
     // Wire executor events
     executor.on("agentEvent", (event: AgentEvent) => {
       state.tree = applyEvent(state.tree, event);
+      this.eventBuffers.get(projectId)?.push(event);
       this.emit("agentEvent", projectId, event);
     });
 
@@ -64,7 +73,13 @@ export class RunService extends EventEmitter {
     });
 
     // Start the executor
-    executor.start({ projectId, packId, workspacePath, runId });
+    executor.start({
+      projectId,
+      packId,
+      workspacePath,
+      runId,
+      previewProvider: this.previewProvider,
+    });
     this.emit("runStarted", projectId, runId);
 
     return toPublicState(state);
@@ -82,6 +97,11 @@ export class RunService extends EventEmitter {
     const state = this.runs.get(projectId);
     if (!state) return null;
     return toPublicState(state);
+  }
+
+  /** Returns buffered events for a project (for replaying on late WebSocket connects). */
+  getBufferedEvents(projectId: string): AgentEvent[] {
+    return this.eventBuffers.get(projectId) ?? [];
   }
 }
 

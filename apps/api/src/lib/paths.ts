@@ -36,3 +36,15 @@ export function designPackDir(projectId: string, packId: string): string {
 export function designPackMetaPath(projectId: string, packId: string): string {
   return join(designPackDir(projectId, packId), "pack-meta.json");
 }
+
+export function snapshotsDir(projectId: string, runId: string): string {
+  return join(artifactsDir(projectId), "snapshots", runId);
+}
+
+export function screenshotPath(
+  projectId: string,
+  runId: string,
+  breakpointId: string
+): string {
+  return join(snapshotsDir(projectId, runId), `${breakpointId}.png`);
+}

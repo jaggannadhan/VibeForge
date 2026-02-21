@@ -45,6 +45,12 @@ export function wsRoutes(runService: RunService) {
         runService.on("runStarted", onRunStarted);
         runService.on("runFinished", onRunFinished);
 
+        // Replay any events emitted before this WebSocket connected
+        const buffered = runService.getBufferedEvents(projectId);
+        for (const event of buffered) {
+          send({ type: "agentEvent", event });
+        }
+
         // Handle incoming messages
         socket.on("message", (raw: Buffer | string) => {
           try {

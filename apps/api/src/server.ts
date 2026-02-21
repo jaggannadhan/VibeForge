@@ -9,6 +9,7 @@ import { workspaceRoutes } from "./routes/workspace.js";
 import { previewRoutes } from "./routes/preview.js";
 import { runRoutes } from "./routes/runs.js";
 import { wsRoutes } from "./routes/ws.js";
+import { artifactRoutes } from "./routes/artifacts.js";
 import { RunService } from "./services/run-service.js";
 import { templateDir } from "./lib/paths.js";
 
@@ -24,7 +25,7 @@ async function main() {
   });
 
   // Run service — singleton for run orchestration
-  const runService = new RunService();
+  const runService = new RunService({ previewProvider: sandboxManager });
 
   // CORS — allow the Next.js dev server
   await app.register(cors, { origin: "http://localhost:3000" });
@@ -45,6 +46,7 @@ async function main() {
   await app.register(previewRoutes(sandboxManager), { prefix: "/api" });
   await app.register(runRoutes(runService), { prefix: "/api" });
   await app.register(wsRoutes(runService), { prefix: "/api" });
+  await app.register(artifactRoutes, { prefix: "/api" });
 
   // Graceful shutdown — stop all preview processes
   const shutdown = async () => {
