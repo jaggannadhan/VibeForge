@@ -51,6 +51,19 @@ export async function getDesignPack(
   return res.json();
 }
 
+// ── Baseline image URL ──────────────────────────────────────────────
+
+export function getBaselineUrl(
+  projectId: string,
+  packId: string,
+  baselinePath: string
+): string {
+  // baselinePath is like "baselines/dashboard/desktop/default.png"
+  // Strip the leading "baselines/" since the API route already includes it
+  const stripped = baselinePath.replace(/^baselines\//, "");
+  return `${API_URL}/projects/${projectId}/design-packs/${packId}/baselines/${stripped}`;
+}
+
 // ── Mock data (until later phases) ──────────────────────────────────
 
 export async function getProject(projectId: string): Promise<GetProjectResponse> {

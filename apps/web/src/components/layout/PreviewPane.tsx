@@ -113,8 +113,9 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route }: Preview
     if (refreshKey !== undefined && refreshKey !== prevRefreshKey.current) {
       prevRefreshKey.current = refreshKey;
       if (preview.status === "ready") {
-        // Small delay to let Next.js HMR pick up the new files
-        const timer = setTimeout(handleRefresh, 1000);
+        // The backend warmup step already ensured the route compiled,
+        // but give a small buffer for any remaining HMR propagation
+        const timer = setTimeout(handleRefresh, 2000);
         return () => clearTimeout(timer);
       }
     }
@@ -129,32 +130,30 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route }: Preview
   if (preview.status === "ready" && iframeSrc) {
     return (
       <div className="flex h-full flex-col">
-        <div className="flex items-center gap-2 border-b px-3 py-2">
-          <Monitor size={14} className="text-muted-foreground" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Preview
-          </span>
-          <span className="ml-auto flex items-center gap-1.5 text-xs text-green-600">
+        <div className="flex items-center gap-2 border-b px-3 py-1.5">
+          <span className="flex items-center gap-1.5 text-xs text-green-600">
             <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
             Live
           </span>
-          <span className="text-xs text-muted-foreground/60">
+          <span className="text-xs text-muted-foreground/60 truncate">
             {iframeSrc}
           </span>
-          <button
-            onClick={handleRefresh}
-            className="rounded p-1 hover:bg-accent transition-colors"
-            title="Refresh preview"
-          >
-            <RefreshCw size={12} className="text-muted-foreground" />
-          </button>
-          <button
-            onClick={handleStop}
-            className="rounded p-1 hover:bg-accent transition-colors"
-            title="Stop preview"
-          >
-            <Square size={12} className="text-muted-foreground" />
-          </button>
+          <span className="ml-auto flex items-center gap-1">
+            <button
+              onClick={handleRefresh}
+              className="rounded p-1 hover:bg-accent transition-colors"
+              title="Refresh preview"
+            >
+              <RefreshCw size={12} className="text-muted-foreground" />
+            </button>
+            <button
+              onClick={handleStop}
+              className="rounded p-1 hover:bg-accent transition-colors"
+              title="Stop preview"
+            >
+              <Square size={12} className="text-muted-foreground" />
+            </button>
+          </span>
         </div>
         <div className="flex-1">
           <iframe
@@ -175,30 +174,22 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route }: Preview
     starting
   ) {
     return (
-      <div className="flex h-full flex-col">
-        <div className="flex items-center gap-2 border-b px-3 py-2">
-          <Monitor size={14} className="text-muted-foreground" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Preview
-          </span>
-        </div>
-        <div className="flex flex-1 items-center justify-center">
-          <div className="flex flex-col items-center gap-4 text-center">
-            {preview.status === "installing" ? (
-              <Package size={32} className="text-blue-500 animate-pulse" />
-            ) : (
-              <Zap size={32} className="text-amber-500 animate-pulse" />
-            )}
-            <div>
-              <p className="text-sm font-medium text-foreground/80">
-                {STATUS_LABELS[preview.status] || "Starting preview..."}
-              </p>
-              <p className="text-xs text-muted-foreground/60 mt-1">
-                This may take a minute on first run
-              </p>
-            </div>
-            <Loader2 size={16} className="animate-spin text-muted-foreground" />
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-4 text-center">
+          {preview.status === "installing" ? (
+            <Package size={32} className="text-blue-500 animate-pulse" />
+          ) : (
+            <Zap size={32} className="text-amber-500 animate-pulse" />
+          )}
+          <div>
+            <p className="text-sm font-medium text-foreground/80">
+              {STATUS_LABELS[preview.status] || "Starting preview..."}
+            </p>
+            <p className="text-xs text-muted-foreground/60 mt-1">
+              This may take a minute on first run
+            </p>
           </div>
+          <Loader2 size={16} className="animate-spin text-muted-foreground" />
         </div>
       </div>
     );
@@ -207,32 +198,24 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route }: Preview
   // ── Error state ───────────────────────────────────────────────────
   if (preview.status === "error") {
     return (
-      <div className="flex h-full flex-col">
-        <div className="flex items-center gap-2 border-b px-3 py-2">
-          <Monitor size={14} className="text-muted-foreground" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Preview
-          </span>
-        </div>
-        <div className="flex flex-1 items-center justify-center">
-          <div className="flex flex-col items-center gap-3 text-center max-w-sm">
-            <Monitor size={48} className="text-red-400 opacity-40" />
-            <p className="text-sm font-medium text-red-600">
-              Preview failed to start
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-center max-w-sm">
+          <Monitor size={48} className="text-red-400 opacity-40" />
+          <p className="text-sm font-medium text-red-600">
+            Preview failed to start
+          </p>
+          {preview.error && (
+            <p className="text-xs text-muted-foreground/80 leading-relaxed">
+              {preview.error}
             </p>
-            {preview.error && (
-              <p className="text-xs text-muted-foreground/80 leading-relaxed">
-                {preview.error}
-              </p>
-            )}
-            <button
-              onClick={handleStart}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-            >
-              <RefreshCw size={12} />
-              Retry
-            </button>
-          </div>
+          )}
+          <button
+            onClick={handleStart}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <RefreshCw size={12} />
+            Retry
+          </button>
         </div>
       </div>
     );
@@ -240,31 +223,23 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route }: Preview
 
   // ── Idle state: show start button ─────────────────────────────────
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b px-3 py-2">
-        <Monitor size={14} className="text-muted-foreground" />
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Preview
-        </span>
-      </div>
-      <div className="flex flex-1 items-center justify-center text-muted-foreground">
-        <div className="text-center max-w-sm">
-          <Monitor size={48} className="mx-auto mb-4 opacity-20" />
-          <p className="text-base font-medium text-foreground/70">
-            Preview not running
-          </p>
-          <p className="text-sm mt-2 text-muted-foreground/80 leading-relaxed">
-            Start the dev server to see a live preview of your workspace.
-          </p>
-          <button
-            onClick={handleStart}
-            disabled={starting}
-            className="mt-4 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            <Play size={14} />
-            Start Preview
-          </button>
-        </div>
+    <div className="flex h-full items-center justify-center text-muted-foreground">
+      <div className="text-center max-w-sm">
+        <Monitor size={48} className="mx-auto mb-4 opacity-20" />
+        <p className="text-base font-medium text-foreground/70">
+          Preview not running
+        </p>
+        <p className="text-sm mt-2 text-muted-foreground/80 leading-relaxed">
+          Start the dev server to see a live preview of your workspace.
+        </p>
+        <button
+          onClick={handleStart}
+          disabled={starting}
+          className="mt-4 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
+          <Play size={14} />
+          Start Preview
+        </button>
       </div>
     </div>
   );

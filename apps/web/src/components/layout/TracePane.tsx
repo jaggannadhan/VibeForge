@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { Activity } from "lucide-react";
+import type { ArtifactLink } from "@vibe-studio/shared";
 import { useTraceStream } from "@/lib/ws";
 import { TraceTree } from "@/components/trace/TraceTree";
 
@@ -9,9 +10,10 @@ interface TracePaneProps {
   projectId: string;
   runActive?: boolean;
   onRunComplete?: () => void;
+  onArtifactClick?: (artifact: ArtifactLink) => void;
 }
 
-export function TracePane({ projectId, runActive = false, onRunComplete }: TracePaneProps) {
+export function TracePane({ projectId, runActive = false, onRunComplete, onArtifactClick }: TracePaneProps) {
   const { tree, runStatus } = useTraceStream(projectId, runActive);
 
   // Fire onRunComplete when runStatus transitions to "success"
@@ -46,7 +48,7 @@ export function TracePane({ projectId, runActive = false, onRunComplete }: Trace
         )}
       </div>
       <div className="flex-1 overflow-hidden">
-        <TraceTree rootNode={tree} />
+        <TraceTree rootNode={tree} onArtifactClick={onArtifactClick} />
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import type { ArtifactLink } from "@vibe-studio/shared";
 import { ProjectHeader } from "./ProjectHeader";
 import { ThreePaneLayout } from "./ThreePaneLayout";
 import { Spinner } from "@/components/common/Spinner";
@@ -33,6 +34,15 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
   const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
   const [previewAutoStart, setPreviewAutoStart] = useState(false);
   const [targetRoute, setTargetRoute] = useState("/");
+  const [viewingArtifact, setViewingArtifact] = useState<ArtifactLink | null>(null);
+
+  const handleArtifactClick = useCallback((artifact: ArtifactLink) => {
+    setViewingArtifact(artifact);
+  }, []);
+
+  const handleCloseArtifact = useCallback(() => {
+    setViewingArtifact(null);
+  }, []);
 
   // Auto-create a real project for placeholder slugs
   useEffect(() => {
@@ -180,6 +190,10 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
           previewAutoStart={previewAutoStart}
           previewRefreshKey={previewRefreshKey}
           previewRoute={targetRoute}
+          packId={activePackId}
+          viewingArtifact={viewingArtifact}
+          onArtifactClick={handleArtifactClick}
+          onCloseArtifact={handleCloseArtifact}
         />
       </div>
     </div>

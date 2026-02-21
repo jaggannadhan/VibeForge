@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { IterationNode } from "@vibe-studio/shared";
+import type { IterationNode, ArtifactLink } from "@vibe-studio/shared";
 import { ChevronRight, ChevronDown, FileDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "@/components/common/Badge";
@@ -12,6 +12,7 @@ interface TraceNodeProps {
   node: IterationNode;
   depth?: number;
   defaultExpanded?: boolean;
+  onArtifactClick?: (artifact: ArtifactLink) => void;
 }
 
 function formatDuration(start?: string, end?: string): string | null {
@@ -28,7 +29,7 @@ function formatScore(score?: number): string {
   return `${(score * 100).toFixed(0)}%`;
 }
 
-export function TraceNode({ node, depth = 0, defaultExpanded = true }: TraceNodeProps) {
+export function TraceNode({ node, depth = 0, defaultExpanded = true, onArtifactClick }: TraceNodeProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const hasChildren = node.children && node.children.length > 0;
   const isRunning = node.status === "running";
@@ -108,13 +109,14 @@ export function TraceNode({ node, depth = 0, defaultExpanded = true }: TraceNode
           {node.artifacts && node.artifacts.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {node.artifacts.map((artifact) => (
-                <span
+                <button
                   key={artifact.id}
-                  className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+                  onClick={() => onArtifactClick?.(artifact)}
+                  className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer transition-colors"
                 >
                   <FileDown size={10} />
                   {artifact.label}
-                </span>
+                </button>
               ))}
             </div>
           )}
@@ -137,6 +139,7 @@ export function TraceNode({ node, depth = 0, defaultExpanded = true }: TraceNode
             node={child}
             depth={depth + 1}
             defaultExpanded={defaultExpanded}
+            onArtifactClick={onArtifactClick}
           />
         ))}
     </div>

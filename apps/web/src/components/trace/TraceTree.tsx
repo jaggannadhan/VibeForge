@@ -1,15 +1,16 @@
 "use client";
 
-import type { IterationNode } from "@vibe-studio/shared";
+import type { IterationNode, ArtifactLink } from "@vibe-studio/shared";
 import { Activity } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TraceNode } from "./TraceNode";
 
 interface TraceTreeProps {
   rootNode: IterationNode | null;
+  onArtifactClick?: (artifact: ArtifactLink) => void;
 }
 
-export function TraceTree({ rootNode }: TraceTreeProps) {
+export function TraceTree({ rootNode, onArtifactClick }: TraceTreeProps) {
   if (!rootNode) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -27,7 +28,7 @@ export function TraceTree({ rootNode }: TraceTreeProps) {
   return (
     <ScrollArea className="h-full">
       <div className="py-2">
-        <TraceNode node={rootNode} depth={0} defaultExpanded={true} />
+        <TraceNode node={rootNode} depth={0} defaultExpanded={true} onArtifactClick={onArtifactClick} />
       </div>
     </ScrollArea>
   );

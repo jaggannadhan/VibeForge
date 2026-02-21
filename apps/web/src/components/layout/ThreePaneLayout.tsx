@@ -5,8 +5,9 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
+import type { ArtifactLink } from "@vibe-studio/shared";
 import { FileTreePane } from "./FileTreePane";
-import { PreviewPane } from "./PreviewPane";
+import { CenterPane } from "./CenterPane";
 import { TracePane } from "./TracePane";
 
 interface ThreePaneLayoutProps {
@@ -17,6 +18,10 @@ interface ThreePaneLayoutProps {
   previewAutoStart?: boolean;
   previewRefreshKey?: number;
   previewRoute?: string;
+  packId?: string | null;
+  viewingArtifact?: ArtifactLink | null;
+  onArtifactClick?: (artifact: ArtifactLink) => void;
+  onCloseArtifact?: () => void;
 }
 
 export function ThreePaneLayout({
@@ -27,6 +32,10 @@ export function ThreePaneLayout({
   previewAutoStart,
   previewRefreshKey,
   previewRoute,
+  packId,
+  viewingArtifact,
+  onArtifactClick,
+  onCloseArtifact,
 }: ThreePaneLayoutProps) {
   return (
     <ResizablePanelGroup direction="horizontal" className="h-full w-full">
@@ -37,13 +46,16 @@ export function ThreePaneLayout({
 
       <ResizableHandle withHandle />
 
-      {/* Center pane — Live Preview */}
+      {/* Center pane — Preview + Baseline tabs */}
       <ResizablePanel defaultSize={50} minSize={30}>
-        <PreviewPane
+        <CenterPane
           projectId={projectId}
+          packId={packId ?? null}
           autoStart={previewAutoStart}
           refreshKey={previewRefreshKey}
           route={previewRoute}
+          viewingArtifact={viewingArtifact}
+          onCloseArtifact={onCloseArtifact}
         />
       </ResizablePanel>
 
@@ -51,7 +63,7 @@ export function ThreePaneLayout({
 
       {/* Right pane — Agent Trace */}
       <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
-        <TracePane projectId={projectId} runActive={runActive} onRunComplete={onRunComplete} />
+        <TracePane projectId={projectId} runActive={runActive} onRunComplete={onRunComplete} onArtifactClick={onArtifactClick} />
       </ResizablePanel>
     </ResizablePanelGroup>
   );

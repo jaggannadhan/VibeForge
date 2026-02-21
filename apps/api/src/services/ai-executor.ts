@@ -260,6 +260,16 @@ export class AiExecutor extends EventEmitter implements Executor {
 
       if (this.stopped) return;
 
+      // Warm up the target route — force Next.js to detect & compile new files
+      this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+        message: "Waiting for route to compile...",
+        progressPct: 15,
+      });
+
+      await this.warmUpRoute(previewUrl, manifestTarget.route);
+
+      if (this.stopped) return;
+
       // Create child nodes for each breakpoint before starting
       console.log(`[AiExecutor] Launching browser for ${manifest.breakpoints.length} breakpoint(s)`);
       this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
@@ -444,6 +454,40 @@ export class AiExecutor extends EventEmitter implements Executor {
     throw new Error(
       `Preview did not become ready within ${timeoutMs}ms`
     );
+  }
+
+  // ── Route warmup ─────────────────────────────────────────────────
+
+  /**
+   * Poll the target route until Next.js has compiled it (non-404 response).
+   * This is needed when the dev server was already running before code gen
+   * wrote new route files — the file watcher may take a moment to detect them.
+   */
+  private async warmUpRoute(
+    previewUrl: string,
+    route: string,
+    timeoutMs = 30_000
+  ): Promise<void> {
+    const targetUrl = new URL(route, previewUrl).toString();
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      if (this.stopped) return;
+
+      try {
+        const response = await fetch(targetUrl);
+        if (response.status !== 404) {
+          console.log(`[AiExecutor] Route ${route} is ready (status ${response.status})`);
+          return;
+        }
+      } catch {
+        // fetch may fail if server is temporarily unavailable
+      }
+
+      await delay(1000);
+    }
+
+    console.warn(`[AiExecutor] Route warmup timed out after ${timeoutMs}ms for ${targetUrl}`);
   }
 
   // ── Event helpers ─────────────────────────────────────────────────
