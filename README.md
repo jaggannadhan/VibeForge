@@ -14,9 +14,9 @@
 
 ## What is Vibe Studio?
 
-Vibe Studio is a full-stack platform that automates the translation of visual designs into production-quality frontend code. You upload a **design pack** (a structured bundle of baseline screenshots, a design IR manifest, and layout/style/a11y targets), and the system:
+Vibe Studio is a full-stack platform that automates the translation of visual designs into production-quality frontend code. You upload a **ZIP of design images** (e.g. exported from Figma), and the system auto-generates the design manifest, IR, and baseline structure, then:
 
-1. **Generates** a Next.js 14 page using Claude AI, guided by the design IR nodes
+1. **Generates** a Next.js 14 page using Claude AI with multimodal input — the baseline design images are sent alongside the design IR so Claude can see exactly what to build
 2. **Screenshots** the rendered output using Playwright at each target breakpoint
 3. **Scores** the result against the baseline using Claude Vision across four dimensions — layout, style, accessibility, and perceptual similarity
 4. **Iterates** — accepting improvements, rejecting regressions, and restoring from the best snapshot — until the score threshold is met or stop conditions trigger
@@ -27,7 +27,7 @@ The entire loop runs autonomously. A real-time WebSocket trace streams every ste
 
 ## Use Cases
 
-- **Design Handoff Automation** — Convert Figma mockups into working Next.js pages without manual slicing. Upload a design pack and let the agent iterate until it matches.
+- **Design Handoff Automation** — Convert Figma mockups into working Next.js pages without manual slicing. Upload a ZIP of design images and let the agent iterate until it matches.
 
 - **Visual Regression Testing** — Use the scoring pipeline as a continuous visual QA system. The four-dimension scoring (layout, style, a11y, perceptual) catches regressions that unit tests miss.
 
@@ -74,6 +74,7 @@ AgentDOM/
 |---|---|
 | `ai-executor.ts` | Orchestrates the iteration loop: codegen -> screenshot -> scoring -> decision |
 | `prompt-builder.ts` | Builds Claude prompts with design IR, feedback, patch plans, and overflow issues |
+| `pack-generator.ts` | Auto-generates manifest.json, design-ir.json, and baselines from uploaded images |
 | `screenshot-service.ts` | Playwright-based screenshot capture at multiple breakpoints |
 | `scoring-service.ts` | Claude Vision scoring across layout, style, a11y, and perceptual dimensions |
 | `scorekeeper.ts` | Best-so-far tracking; accepts improvements, rejects regressions |
@@ -99,7 +100,7 @@ AgentDOM/
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd VibeForge
+cd AgentDOM
 
 # Install all dependencies
 pnpm install
