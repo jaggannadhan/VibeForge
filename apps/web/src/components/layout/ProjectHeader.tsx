@@ -1,68 +1,68 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { Upload, Package, Play, Square, Loader2 } from "lucide-react";
+import { useState, useRef, useCallback } from "react";
+import { Plus, Package, Play, Square, MoreHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ProjectHeaderProps {
   projectId: string;
   projectName?: string;
-  uploading?: boolean;
-  onDesignPackUploaded?: (file: File) => void;
   canRun?: boolean;
   runActive?: boolean;
+  onNewProject?: () => void;
   onRun?: () => void;
   onStop?: () => void;
+  onRename?: (name: string) => Promise<void>;
 }
 
 export function ProjectHeader({
   projectId,
   projectName = "Untitled Project",
-  uploading = false,
-  onDesignPackUploaded,
   canRun = false,
   runActive = false,
+  onNewProject,
   onRun,
   onStop,
+  onRename,
 }: ProjectHeaderProps) {
-  const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(projectName);
+  const [saving, setSaving] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileSelect = (file: File) => {
-    if (!file.name.endsWith(".zip")) {
-      alert("Please upload a .zip file (Design Pack)");
-      return;
+  const handleNameClick = useCallback(() => {
+    setEditValue(projectName);
+    setEditing(true);
+    // Focus after React re-renders
+    setTimeout(() => nameInputRef.current?.select(), 0);
+  }, [projectName]);
+
+  const handleNameBlur = useCallback(async () => {
+    setEditing(false);
+    const trimmed = editValue.trim();
+    if (!trimmed || trimmed === projectName) return;
+    setSaving(true);
+    try {
+      await onRename?.(trimmed);
+    } finally {
+      setSaving(false);
     }
-    onDesignPackUploaded?.(file);
-  };
+  }, [editValue, projectName, onRename]);
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFileSelect(file);
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleFileSelect(file);
-    // Reset so the same file can be re-selected
-    e.target.value = "";
-  };
+  const handleNameKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        nameInputRef.current?.blur();
+      } else if (e.key === "Escape") {
+        setEditValue(projectName);
+        setEditing(false);
+      }
+    },
+    [projectName]
+  );
 
   return (
-    <header
-      className={cn(
-        "flex h-12 shrink-0 items-center gap-3 border-b bg-background px-4 transition-colors",
-        dragOver && "bg-blue-50 border-blue-300"
-      )}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={handleDrop}
-    >
+    <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-4">
       {/* Logo / App name */}
       <div className="flex items-center gap-2">
         <Package size={18} className="text-primary" />
@@ -71,29 +71,38 @@ export function ProjectHeader({
 
       <div className="mx-2 h-5 w-px bg-border" />
 
-      {/* Project name */}
-      <span className="text-sm text-muted-foreground">{projectName}</span>
+      {/* Project name — click to edit */}
+      <div className="flex items-center gap-1.5">
+        {editing ? (
+          <input
+            ref={nameInputRef}
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleNameBlur}
+            onKeyDown={handleNameKeyDown}
+            className="bg-transparent text-sm text-muted-foreground outline-none border-none p-0 m-0 w-auto min-w-[80px]"
+            style={{ width: `${Math.max(editValue.length, 8)}ch` }}
+          />
+        ) : (
+          <span
+            onClick={handleNameClick}
+            className="text-sm text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+          >
+            {projectName}
+          </span>
+        )}
+        {saving && <MoreHorizontal size={14} className="text-muted-foreground animate-pulse" />}
+      </div>
 
       <div className="flex-1" />
 
-      {/* Upload Design Pack button */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".zip"
-        className="hidden"
-        onChange={handleInputChange}
-      />
+      {/* New Project button */}
       <button
-        onClick={() => fileInputRef.current?.click()}
-        disabled={uploading}
-        className={cn(
-          "inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent",
-          uploading && "opacity-50 cursor-not-allowed"
-        )}
+        onClick={onNewProject}
+        className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent"
       >
-        {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-        {uploading ? "Uploading..." : "Upload Design Pack"}
+        <Plus size={14} />
+        New Project
       </button>
 
       {/* Run / Stop */}
@@ -109,6 +118,7 @@ export function ProjectHeader({
         <button
           disabled={!canRun}
           onClick={onRun}
+          title={!canRun ? "Create design files first" : undefined}
           className={cn(
             "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90",
             !canRun && "opacity-50 cursor-not-allowed"

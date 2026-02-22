@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, readdir, writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import {
@@ -8,7 +9,7 @@ import {
 } from "@vibe-studio/shared";
 import type { AgentEvent } from "@vibe-studio/shared";
 import type { Executor, ExecutorOptions, PreviewProvider } from "./executor.js";
-import { designPackDir, snapshotsDir } from "../lib/paths.js";
+import { snapshotsDir } from "../lib/paths.js";
 import { buildCodeGenPrompt } from "./prompt-builder.js";
 import { parseGeneratedFiles } from "./response-parser.js";
 import { ScreenshotService } from "./screenshot-service.js";
@@ -44,7 +45,7 @@ export class AiExecutor extends EventEmitter implements Executor {
   }
 
   private async run(options: ExecutorOptions): Promise<void> {
-    const { projectId, packId, workspacePath, runId } = options;
+    const { projectId, designDir, workspacePath, runId } = options;
     this.abortController = new AbortController();
 
     const rootId = "root";
@@ -53,12 +54,12 @@ export class AiExecutor extends EventEmitter implements Executor {
 
     try {
       // ── Root node ───────────────────────────────────────────────
-      this.emitEvent(projectId, packId, rootId, "nodeCreated", {
+      this.emitEvent(projectId, designDir, rootId, "nodeCreated", {
         stepKey: "run",
         title: `Run ${runId.slice(0, 8)}`,
         status: "running",
       });
-      this.emitEvent(projectId, packId, rootId, "nodeStarted", {
+      this.emitEvent(projectId, designDir, rootId, "nodeStarted", {
         stepKey: "run",
         title: `Run ${runId.slice(0, 8)}`,
         status: "running",
@@ -66,10 +67,10 @@ export class AiExecutor extends EventEmitter implements Executor {
 
       if (this.stopped) return;
 
-      // ── Read design pack (once, before loop) ──────────────────
-      const packDir = designPackDir(projectId, packId);
-      const manifestRaw = await readFile(join(packDir, "manifest.json"), "utf-8");
-      const irRaw = await readFile(join(packDir, "design-ir.json"), "utf-8");
+      // ── Read design files from workspace ──────────────────────
+      const designFilesDir = join(workspacePath, designDir);
+      const manifestRaw = await readFile(join(designFilesDir, "manifest.json"), "utf-8");
+      const irRaw = await readFile(join(designFilesDir, "design-ir.json"), "utf-8");
 
       const manifest = ManifestSchema.parse(JSON.parse(manifestRaw));
       const designIr = DesignIrSchema.parse(JSON.parse(irRaw));
@@ -99,7 +100,7 @@ export class AiExecutor extends EventEmitter implements Executor {
       }
 
       const stateId = manifest.states[0].stateId;
-      const baselinesRoot = join(packDir, "baselines");
+      const baselinesRoot = join(designFilesDir, "baselines");
       const client = new Anthropic();
       const screenshotService = new ScreenshotService();
       const scoringService = new ScoringService();
@@ -124,12 +125,12 @@ export class AiExecutor extends EventEmitter implements Executor {
         const iterId = `root-iter${iter}`;
         currentIterNodeId = iterId;
 
-        this.emitEvent(projectId, packId, iterId, "nodeCreated", {
+        this.emitEvent(projectId, designDir, iterId, "nodeCreated", {
           stepKey: "iteration",
           title: `Iteration ${iter + 1}`,
           status: "running",
         });
-        this.emitEvent(projectId, packId, iterId, "nodeStarted", {
+        this.emitEvent(projectId, designDir, iterId, "nodeStarted", {
           stepKey: "iteration",
           title: `Iteration ${iter + 1}`,
           status: "running",
@@ -139,12 +140,12 @@ export class AiExecutor extends EventEmitter implements Executor {
         currentStep = "codeGen";
         const codeGenId = `${iterId}-codegen`;
 
-        this.emitEvent(projectId, packId, codeGenId, "nodeCreated", {
+        this.emitEvent(projectId, designDir, codeGenId, "nodeCreated", {
           stepKey: "codeGen",
           title: "Code Generation",
           status: "queued",
         });
-        this.emitEvent(projectId, packId, codeGenId, "nodeStarted", {
+        this.emitEvent(projectId, designDir, codeGenId, "nodeStarted", {
           stepKey: "codeGen",
           title: "Code Generation",
           status: "running",
@@ -166,13 +167,13 @@ export class AiExecutor extends EventEmitter implements Executor {
 
           // Emit focus area to trace
           const lockedMsg = lockedIds.size > 0 ? ` (${lockedIds.size} locked)` : "";
-          this.emitEvent(projectId, packId, iterId, "nodeProgress", {
+          this.emitEvent(projectId, designDir, iterId, "nodeProgress", {
             focusArea: currentPatchPlan.focusArea,
             message: `Focus: ${currentPatchPlan.focusArea} — targeting ${currentPatchPlan.topTargets.length} node(s)${lockedMsg}`,
           });
         }
 
-        this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
+        this.emitEvent(projectId, designDir, codeGenId, "nodeProgress", {
           message: iter > 0 ? "Building prompt with feedback..." : "Building prompt...",
           progressPct: 20,
         });
@@ -200,15 +201,39 @@ export class AiExecutor extends EventEmitter implements Executor {
           overflowIssues: lastOverflowIssues.length > 0 ? lastOverflowIssues : undefined,
         });
 
-        this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
-          message: "Calling Claude API...",
+        this.emitEvent(projectId, designDir, codeGenId, "nodeProgress", {
+          message: "Loading baseline images...",
+          progressPct: 25,
+        });
+
+        // Build multimodal content: baseline images + text prompt
+        const userContent: Anthropic.Messages.ContentBlockParam[] = [];
+
+        // Collect baseline images to send to Claude
+        const baselineImages = await this.collectBaselineImages(baselinesRoot, targetId);
+        for (const img of baselineImages) {
+          userContent.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: img.base64,
+            },
+          });
+        }
+
+        // Add the text prompt
+        userContent.push({ type: "text", text: user });
+
+        this.emitEvent(projectId, designDir, codeGenId, "nodeProgress", {
+          message: `Calling Claude API with ${baselineImages.length} baseline image(s)...`,
           progressPct: 30,
         });
 
         if (this.stopped) return;
 
         const response = await client.messages.create(
-          { model: MODEL, max_tokens: MAX_TOKENS, system, messages: [{ role: "user", content: user }] },
+          { model: MODEL, max_tokens: MAX_TOKENS, system, messages: [{ role: "user", content: userContent }] },
           { signal: this.abortController.signal }
         );
 
@@ -219,14 +244,14 @@ export class AiExecutor extends EventEmitter implements Executor {
           .map((block) => (block.type === "text" ? block.text : ""))
           .join("");
 
-        this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
+        this.emitEvent(projectId, designDir, codeGenId, "nodeProgress", {
           message: "Parsing response...",
           progressPct: 80,
         });
 
         const generatedFiles = parseGeneratedFiles(responseText);
 
-        this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
+        this.emitEvent(projectId, designDir, codeGenId, "nodeProgress", {
           message: `Writing ${generatedFiles.length} files...`,
           progressPct: 90,
         });
@@ -239,13 +264,13 @@ export class AiExecutor extends EventEmitter implements Executor {
 
         if (this.stopped) return;
 
-        this.emitEvent(projectId, packId, codeGenId, "nodeFinished", {
+        this.emitEvent(projectId, designDir, codeGenId, "nodeFinished", {
           status: "success",
           message: `Generated ${generatedFiles.length} file${generatedFiles.length === 1 ? "" : "s"}`,
         });
 
         for (const file of generatedFiles) {
-          this.emitEvent(projectId, packId, codeGenId, "artifactAdded", {
+          this.emitEvent(projectId, designDir, codeGenId, "artifactAdded", {
             artifact: {
               id: `iter${iter}-file-${file.path.replace(/\//g, "-")}`,
               kind: "workspaceFile",
@@ -259,18 +284,18 @@ export class AiExecutor extends EventEmitter implements Executor {
         currentStep = "screenshot";
         const screenshotId = `${iterId}-screenshot`;
 
-        this.emitEvent(projectId, packId, screenshotId, "nodeCreated", {
+        this.emitEvent(projectId, designDir, screenshotId, "nodeCreated", {
           stepKey: "screenshot",
           title: "Screenshot Capture",
           status: "queued",
         });
-        this.emitEvent(projectId, packId, screenshotId, "nodeStarted", {
+        this.emitEvent(projectId, designDir, screenshotId, "nodeStarted", {
           stepKey: "screenshot",
           title: "Screenshot Capture",
           status: "running",
         });
 
-        this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+        this.emitEvent(projectId, designDir, screenshotId, "nodeProgress", {
           message: "Waiting for preview server...",
           progressPct: 10,
         });
@@ -283,7 +308,7 @@ export class AiExecutor extends EventEmitter implements Executor {
 
         if (this.stopped) return;
 
-        this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+        this.emitEvent(projectId, designDir, screenshotId, "nodeProgress", {
           message: "Waiting for route to compile...",
           progressPct: 15,
         });
@@ -292,13 +317,13 @@ export class AiExecutor extends EventEmitter implements Executor {
 
         if (this.stopped) return;
 
-        this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+        this.emitEvent(projectId, designDir, screenshotId, "nodeProgress", {
           message: `Launching browser for ${manifest.breakpoints.length} breakpoint(s)...`,
           progressPct: 20,
         });
 
         for (const bp of manifest.breakpoints) {
-          this.emitEvent(projectId, packId, `${screenshotId}-${bp.breakpointId}`, "nodeCreated", {
+          this.emitEvent(projectId, designDir, `${screenshotId}-${bp.breakpointId}`, "nodeCreated", {
             stepKey: "capture",
             title: `${bp.breakpointId} (${bp.width}×${bp.height})`,
             status: "queued",
@@ -315,12 +340,12 @@ export class AiExecutor extends EventEmitter implements Executor {
           route: manifestTarget.route,
           breakpoints: manifest.breakpoints,
           onProgress: (breakpointId, index, total) => {
-            this.emitEvent(projectId, packId, `${screenshotId}-${breakpointId}`, "nodeStarted", {
+            this.emitEvent(projectId, designDir, `${screenshotId}-${breakpointId}`, "nodeStarted", {
               stepKey: "capture",
               title: breakpointId,
               status: "running",
             });
-            this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+            this.emitEvent(projectId, designDir, screenshotId, "nodeProgress", {
               message: `Capturing ${breakpointId} (${index + 1}/${total})...`,
               progressPct: 20 + Math.round(((index + 1) / total) * 70),
             });
@@ -329,11 +354,11 @@ export class AiExecutor extends EventEmitter implements Executor {
             const nodeId = `${screenshotId}-${breakpointId}`;
             if (result) {
               capturedCount++;
-              this.emitEvent(projectId, packId, nodeId, "nodeFinished", {
+              this.emitEvent(projectId, designDir, nodeId, "nodeFinished", {
                 status: "success",
                 message: `${(result.sizeBytes / 1024).toFixed(0)} KB`,
               });
-              this.emitEvent(projectId, packId, nodeId, "artifactAdded", {
+              this.emitEvent(projectId, designDir, nodeId, "artifactAdded", {
                 artifact: {
                   id: `iter${iter}-screenshot-${breakpointId}`,
                   kind: "snapshotImage",
@@ -345,7 +370,7 @@ export class AiExecutor extends EventEmitter implements Executor {
               });
             } else {
               failedCount++;
-              this.emitEvent(projectId, packId, nodeId, "nodeFailed", {
+              this.emitEvent(projectId, designDir, nodeId, "nodeFailed", {
                 status: "error",
                 message: error || "Capture failed",
               });
@@ -359,7 +384,7 @@ export class AiExecutor extends EventEmitter implements Executor {
           ? `Captured ${capturedCount}/${capturedCount + failedCount}, ${failedCount} failed`
           : `Captured ${capturedCount} screenshot(s)`;
 
-        this.emitEvent(projectId, packId, screenshotId, "nodeFinished", {
+        this.emitEvent(projectId, designDir, screenshotId, "nodeFinished", {
           status: failedCount > 0 && capturedCount === 0 ? "error" : "success",
           message: captureMsg,
         });
@@ -377,12 +402,12 @@ export class AiExecutor extends EventEmitter implements Executor {
             ? `${overflowReport.offenderCount} overflow issue(s) found`
             : "No overflow detected";
 
-          this.emitEvent(projectId, packId, `${iterId}-overflow`, "nodeCreated", {
+          this.emitEvent(projectId, designDir, `${iterId}-overflow`, "nodeCreated", {
             stepKey: "overflow",
             title: "Overflow Check",
             status: "running",
           });
-          this.emitEvent(projectId, packId, `${iterId}-overflow`, "nodeFinished", {
+          this.emitEvent(projectId, designDir, `${iterId}-overflow`, "nodeFinished", {
             status: overflowReport.offenderCount > 0 ? "error" : "success",
             message: overflowMsg,
           });
@@ -400,7 +425,7 @@ export class AiExecutor extends EventEmitter implements Executor {
             const reportPath = join(snapshotsDir(projectId, runId), `iter-${iter}-overflow.json`);
             await writeFile(reportPath, reportJson, "utf-8");
 
-            this.emitEvent(projectId, packId, `${iterId}-overflow`, "artifactAdded", {
+            this.emitEvent(projectId, designDir, `${iterId}-overflow`, "artifactAdded", {
               artifact: {
                 id: `iter${iter}-overflow-report`,
                 kind: "overflowReport",
@@ -418,12 +443,12 @@ export class AiExecutor extends EventEmitter implements Executor {
         currentStep = "scoring";
         const scoringId = `${iterId}-scoring`;
 
-        this.emitEvent(projectId, packId, scoringId, "nodeCreated", {
+        this.emitEvent(projectId, designDir, scoringId, "nodeCreated", {
           stepKey: "scoring",
           title: "Visual Scoring",
           status: "queued",
         });
-        this.emitEvent(projectId, packId, scoringId, "nodeStarted", {
+        this.emitEvent(projectId, designDir, scoringId, "nodeStarted", {
           stepKey: "scoring",
           title: "Visual Scoring",
           status: "running",
@@ -440,14 +465,14 @@ export class AiExecutor extends EventEmitter implements Executor {
         }));
 
         for (const input of scoringInputs) {
-          this.emitEvent(projectId, packId, `${scoringId}-${input.breakpointId}`, "nodeCreated", {
+          this.emitEvent(projectId, designDir, `${scoringId}-${input.breakpointId}`, "nodeCreated", {
             stepKey: "score",
             title: input.breakpointId,
             status: "queued",
           });
         }
 
-        this.emitEvent(projectId, packId, scoringId, "nodeProgress", {
+        this.emitEvent(projectId, designDir, scoringId, "nodeProgress", {
           message: `Scoring ${scoringInputs.length} breakpoint(s) with Claude Vision...`,
           progressPct: 10,
         });
@@ -456,17 +481,17 @@ export class AiExecutor extends EventEmitter implements Executor {
         const aggregateScore = await scoringService.scoreAll(scoringInputs, (bpScore) => {
           scoredCount++;
           const nodeId = `${scoringId}-${bpScore.breakpointId}`;
-          this.emitEvent(projectId, packId, nodeId, "nodeStarted", {
+          this.emitEvent(projectId, designDir, nodeId, "nodeStarted", {
             stepKey: "score",
             title: bpScore.breakpointId,
             status: "running",
           });
-          this.emitEvent(projectId, packId, nodeId, "nodeFinished", {
+          this.emitEvent(projectId, designDir, nodeId, "nodeFinished", {
             status: "success",
             message: `Score: ${bpScore.overall}`,
             score: { overall: bpScore.overall, layout: bpScore.layout, style: bpScore.style, a11y: bpScore.a11y, perceptual: bpScore.perceptual },
           });
-          this.emitEvent(projectId, packId, scoringId, "nodeProgress", {
+          this.emitEvent(projectId, designDir, scoringId, "nodeProgress", {
             message: `Scored ${scoredCount}/${scoringInputs.length} breakpoint(s)...`,
             progressPct: 10 + Math.round((scoredCount / scoringInputs.length) * 85),
           });
@@ -487,7 +512,7 @@ export class AiExecutor extends EventEmitter implements Executor {
           ? { ...finalScore, deltaFromPrev: Math.round(delta * 100) / 100 }
           : finalScore;
 
-        this.emitEvent(projectId, packId, scoringId, "nodeFinished", {
+        this.emitEvent(projectId, designDir, scoringId, "nodeFinished", {
           status: "success",
           message: `Score: ${finalScore.overall}`,
           score: scoreWithDelta,
@@ -520,7 +545,7 @@ export class AiExecutor extends EventEmitter implements Executor {
             ? `Score ${finalScore.overall} >= ${threshold} — threshold met!`
             : `Score ${finalScore.overall} — accepted (best so far)`;
 
-          this.emitEvent(projectId, packId, iterId, "nodeFinished", {
+          this.emitEvent(projectId, designDir, iterId, "nodeFinished", {
             status: "success",
             message: iterMsg,
             score: scoreWithDelta,
@@ -535,7 +560,7 @@ export class AiExecutor extends EventEmitter implements Executor {
 
           const iterMsg = `Score ${finalScore.overall} — rejected (${decision.reason}), reverting to iteration ${decision.bestIterationIndex + 1}`;
 
-          this.emitEvent(projectId, packId, iterId, "nodeFinished", {
+          this.emitEvent(projectId, designDir, iterId, "nodeFinished", {
             status: "success",
             message: iterMsg,
             score: scoreWithDelta,
@@ -562,7 +587,7 @@ export class AiExecutor extends EventEmitter implements Executor {
           startTime: runStartTime,
         });
         if (stopResult.stop) {
-          this.emitEvent(projectId, packId, iterId, "nodeProgress", {
+          this.emitEvent(projectId, designDir, iterId, "nodeProgress", {
             message: `Stopping: ${stopResult.reason}`,
           });
           break;
@@ -579,7 +604,7 @@ export class AiExecutor extends EventEmitter implements Executor {
         startTime: runStartTime,
       });
       const stopReason = thresholdMet ? "threshold met" : (lastStop.stop ? lastStop.reason : "max iterations");
-      this.emitEvent(projectId, packId, rootId, "nodeFinished", {
+      this.emitEvent(projectId, designDir, rootId, "nodeFinished", {
         status: "success",
         message: `Run complete — best score: ${bestState.bestScore} (iteration ${bestState.bestIterationIndex + 1}, ${stopReason})`,
         score: { overall: bestState.bestScore, layout: finalScore.layout, style: finalScore.style, a11y: finalScore.a11y, perceptual: finalScore.perceptual },
@@ -595,11 +620,11 @@ export class AiExecutor extends EventEmitter implements Executor {
         console.error("[AiExecutor] Stack:", error.stack);
       }
 
-      this.emitEvent(projectId, packId, currentIterNodeId, "nodeFailed", {
+      this.emitEvent(projectId, designDir, currentIterNodeId, "nodeFailed", {
         status: "error",
         message,
       });
-      this.emitEvent(projectId, packId, rootId, "nodeFailed", {
+      this.emitEvent(projectId, designDir, rootId, "nodeFailed", {
         status: "error",
         message,
       });
@@ -680,13 +705,55 @@ export class AiExecutor extends EventEmitter implements Executor {
     console.warn(`[AiExecutor] Route warmup timed out after ${timeoutMs}ms for ${targetUrl}`);
   }
 
+  // ── Baseline image helpers ──────────────────────────────────────────
+
+  /**
+   * Collect all baseline PNGs for a given target as base64 strings.
+   * baselines/<targetId>/<breakpointId>/<stateId>.png
+   */
+  private async collectBaselineImages(
+    baselinesRoot: string,
+    targetId: string
+  ): Promise<{ breakpointId: string; stateId: string; base64: string }[]> {
+    const results: { breakpointId: string; stateId: string; base64: string }[] = [];
+    const targetDir = join(baselinesRoot, targetId);
+
+    if (!existsSync(targetDir)) {
+      console.warn(`[AiExecutor] Baselines directory not found: ${targetDir}`);
+      return results;
+    }
+
+    try {
+      const breakpointDirs = await readdir(targetDir, { withFileTypes: true });
+      for (const bpEntry of breakpointDirs) {
+        if (!bpEntry.isDirectory()) continue;
+        const bpDir = join(targetDir, bpEntry.name);
+        const stateFiles = await readdir(bpDir, { withFileTypes: true });
+        for (const stateEntry of stateFiles) {
+          if (!stateEntry.isFile() || !stateEntry.name.endsWith(".png")) continue;
+          const stateId = stateEntry.name.replace(/\.png$/, "");
+          const imgBuffer = await readFile(join(bpDir, stateEntry.name));
+          results.push({
+            breakpointId: bpEntry.name,
+            stateId,
+            base64: imgBuffer.toString("base64"),
+          });
+        }
+      }
+    } catch (err) {
+      console.warn(`[AiExecutor] Failed to read baseline images:`, err);
+    }
+
+    return results;
+  }
+
   // ── Event helpers ─────────────────────────────────────────────────
 
   private eventCounter = 0;
 
   private emitEvent(
     projectId: string,
-    packId: string,
+    designDir: string,
     nodeId: string,
     type: AgentEvent["type"],
     payload: AgentEvent["payload"]
@@ -695,7 +762,7 @@ export class AiExecutor extends EventEmitter implements Executor {
     const event: AgentEvent = {
       eventId: `evt-${this.eventCounter}-${Date.now()}`,
       projectId,
-      packId,
+      packId: designDir,
       nodeId,
       type,
       ts: new Date().toISOString(),

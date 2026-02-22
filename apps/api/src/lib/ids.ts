@@ -7,3 +7,7 @@ export function newProjectId(): string {
 export function newPackId(): string {
   return `pack_${nanoid(12)}`;
 }
+
+export function newUploadId(): string {
+  return `u_${nanoid(12)}`;
+}

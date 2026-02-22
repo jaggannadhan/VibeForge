@@ -13,8 +13,6 @@ import type {
 } from "@vibe-studio/shared";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 // ── Real API calls ──────────────────────────────────────────────────
 
 export async function createProject(name: string): Promise<{ projectId: string; name: string; createdAt: string }> {
@@ -24,6 +22,19 @@ export async function createProject(name: string): Promise<{ projectId: string; 
     body: JSON.stringify({ name }),
   });
   if (!res.ok) throw new Error(`Failed to create project: ${res.status}`);
+  return res.json();
+}
+
+export async function renameProject(
+  projectId: string,
+  name: string
+): Promise<{ projectId: string; name: string }> {
+  const res = await fetch(`${API_URL}/projects/${projectId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Failed to rename project: ${res.status}`);
   return res.json();
 }
 
@@ -70,24 +81,92 @@ export function getBaselineUrl(
   return `${API_URL}/projects/${projectId}/design-packs/${packId}/baselines/${stripped}`;
 }
 
-// ── Mock data (until later phases) ──────────────────────────────────
+// ── Workspace design baselines ──────────────────────────────────────
 
-export async function getProject(projectId: string): Promise<GetProjectResponse> {
-  await delay(200);
-  return {
-    projectId,
-    name: "Dashboard App",
-    status: "running",
-    previewUrl: undefined,
-    lastRunSummary: {
-      runId: "run-001",
-      status: "running",
-      overallScore: 0.85,
-      iterationCount: 2,
-    },
-    createdAt: "2026-02-20T10:00:00.000Z",
-    updatedAt: "2026-02-20T10:00:22.100Z",
+export async function getDesignBaselines(
+  projectId: string,
+  designDir: string
+): Promise<{ baselines: string[] }> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/design-baselines?designDir=${encodeURIComponent(designDir)}`
+  );
+  if (!res.ok) throw new Error(`Failed to get design baselines: ${res.status}`);
+  return res.json();
+}
+
+export function getDesignBaselineUrl(
+  projectId: string,
+  designDir: string,
+  baselinePath: string
+): string {
+  // baselinePath is like "baselines/screen-1/desktop/default.png"
+  // Strip leading "baselines/" to get the image-specific part
+  const stripped = baselinePath.replace(/^baselines\//, "");
+  return `${API_URL}/projects/${projectId}/design-baselines/image/${stripped}?designDir=${encodeURIComponent(designDir)}`;
+}
+
+// ── Design ZIP upload + design files generation ─────────────────────
+
+export interface DesignZipUploadResponse {
+  uploadId: string;
+  detected: {
+    desktop: { exists: boolean; width?: number; height?: number };
+    mobile: { exists: boolean; width?: number; height?: number };
+    states: string[];
   };
+}
+
+export interface DesignFilesResponse {
+  success: boolean;
+  designDir: string;
+  defaultRoute: string;
+  files: string[];
+}
+
+export async function uploadDesignZip(
+  projectId: string,
+  file: File
+): Promise<DesignZipUploadResponse> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const res = await fetch(`${API_URL}/projects/${projectId}/design-zip`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function createDesignFiles(
+  projectId: string,
+  uploadId: string,
+  projectName: string
+): Promise<DesignFilesResponse> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/design-files`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uploadId, projectName }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Design file generation failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ── Project data ────────────────────────────────────────────────────
+
+export async function getProject(projectId: string): Promise<GetProjectResponse | null> {
+  const res = await fetch(`${API_URL}/projects/${projectId}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to get project: ${res.status}`);
+  return res.json();
 }
 
 // ── Real file API (Phase 3) ─────────────────────────────────────────
@@ -140,12 +219,12 @@ export async function getPreviewStatus(projectId: string): Promise<PreviewInfo> 
 
 export async function startRun(
   projectId: string,
-  packId: string
+  designDir: string
 ): Promise<StartRunResponse> {
   const res = await fetch(`${API_URL}/projects/${projectId}/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ packId }),
+    body: JSON.stringify({ designDir }),
   });
   if (!res.ok) throw new Error(`Failed to start run: ${res.status}`);
   return res.json();

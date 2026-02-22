@@ -5,10 +5,12 @@ import type { ArtifactLink } from "@vibe-studio/shared";
 import { ProjectHeader } from "./ProjectHeader";
 import { ThreePaneLayout } from "./ThreePaneLayout";
 import { FullscreenPreview } from "./FullscreenPreview";
+import { NewProjectOverlay } from "./NewProjectOverlay";
 import { Spinner } from "@/components/common/Spinner";
 import {
   createProject,
-  uploadDesignPack,
+  getProject,
+  renameProject,
   startRun,
   stopRun,
   startHistoricalPreview,
@@ -21,13 +23,6 @@ interface ProjectWorkspaceProps {
   initialProjectId: string;
 }
 
-interface UploadResult {
-  type: "success" | "validation_error" | "error";
-  packId?: string;
-  validationErrors?: string[];
-  message?: string;
-}
-
 const PLACEHOLDER_SLUGS = new Set(["demo", "new"]);
 
 export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
@@ -36,15 +31,14 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
     needsAutoCreate ? null : initialProjectId
   );
   const [projectName, setProjectName] = useState("Untitled Project");
-  const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [fileTreeRefreshKey, setFileTreeRefreshKey] = useState(0);
-  const [activePackId, setActivePackId] = useState<string | null>(null);
+  const [activeDesignDir, setActiveDesignDir] = useState<string | null>(null);
   const [runActive, setRunActive] = useState(false);
   const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
-  const [previewAutoStart, setPreviewAutoStart] = useState(false);
   const [targetRoute, setTargetRoute] = useState("/");
   const [viewingArtifact, setViewingArtifact] = useState<ArtifactLink | null>(null);
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [autoExpandPaths, setAutoExpandPaths] = useState<string[]>([]);
 
   // Historical preview state
   const [previewMode, setPreviewMode] = useState<"latest" | "iteration">("latest");
@@ -53,6 +47,15 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenUrl, setFullscreenUrl] = useState<string | null>(null);
   const [bestIterationId, setBestIterationId] = useState<number | null>(null);
+
+  const handleRename = useCallback(
+    async (name: string) => {
+      if (!projectId) return;
+      await renameProject(projectId, name);
+      setProjectName(name);
+    },
+    [projectId]
+  );
 
   const handleArtifactClick = useCallback((artifact: ArtifactLink) => {
     setViewingArtifact(artifact);
@@ -169,7 +172,7 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
     setBestIterationId(newBestId);
   }, []);
 
-  // Auto-create a real project for placeholder slugs
+  // Auto-create a real project for placeholder slugs, or verify existing project exists
   useEffect(() => {
     if (needsAutoCreate) {
       createProject("Dashboard App")
@@ -181,52 +184,52 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
         .catch((err) => {
           console.error("Failed to create project:", err);
         });
-    }
-  }, [needsAutoCreate]);
-
-  const handleDesignPackUpload = useCallback(
-    async (file: File) => {
-      if (!projectId) return;
-      setUploading(true);
-      setUploadResult(null);
-
-      try {
-        const result = await uploadDesignPack(projectId, file);
-
-        if (result.validationErrors && result.validationErrors.length > 0) {
-          setUploadResult({
-            type: "validation_error",
-            packId: result.packId,
-            validationErrors: result.validationErrors,
-          });
-        } else {
-          setUploadResult({
-            type: "success",
-            packId: result.packId,
-            message: `Design pack ${result.packId} uploaded successfully.`,
-          });
-          setActivePackId(result.packId);
-          if (result.defaultRoute) setTargetRoute(result.defaultRoute);
-          setFileTreeRefreshKey((prev) => prev + 1);
-        }
-      } catch (err) {
-        setUploadResult({
-          type: "error",
-          message: err instanceof Error ? err.message : "Upload failed",
+    } else if (projectId) {
+      // Verify the project still exists on the backend
+      getProject(projectId)
+        .then((meta) => {
+          if (!meta) {
+            // Project was deleted — redirect to create a new one
+            console.warn(`Project ${projectId} not found, creating a new one`);
+            setProjectId(null);
+            window.history.replaceState(null, "", "/projects/new");
+            return createProject("Dashboard App").then((res) => {
+              setProjectId(res.projectId);
+              setProjectName(res.name);
+              window.history.replaceState(null, "", `/projects/${res.projectId}`);
+            });
+          }
+          setProjectName(meta.name ?? "Untitled Project");
+        })
+        .catch((err) => {
+          console.error("Failed to verify project:", err);
         });
-      } finally {
-        setUploading(false);
+    }
+  }, [needsAutoCreate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleNewProjectComplete = useCallback(
+    (designDir: string, defaultRoute: string) => {
+      setActiveDesignDir(designDir);
+      if (defaultRoute) setTargetRoute(defaultRoute);
+      setFileTreeRefreshKey((prev) => prev + 1);
+      setShowOverlay(false);
+
+      // Auto-expand the new designs directory in the file tree
+      // designDir is like "src/designs/h-care"
+      const parts = designDir.split("/");
+      const expandPaths: string[] = [];
+      for (let i = 1; i <= parts.length; i++) {
+        expandPaths.push(parts.slice(0, i).join("/"));
       }
+      setAutoExpandPaths(expandPaths);
     },
-    [projectId]
+    []
   );
 
-  const dismissResult = () => setUploadResult(null);
-
   const handleRun = useCallback(async () => {
-    if (!projectId || !activePackId) return;
+    if (!projectId || !activeDesignDir) return;
     try {
-      await startRun(projectId, activePackId);
+      await startRun(projectId, activeDesignDir);
       setRunActive(true);
       // Reset to latest mode when a new run starts
       setPreviewMode("latest");
@@ -235,7 +238,7 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
     } catch (err) {
       console.error("Failed to start run:", err);
     }
-  }, [projectId, activePackId]);
+  }, [projectId, activeDesignDir]);
 
   const handleStop = useCallback(async () => {
     if (!projectId) return;
@@ -250,7 +253,6 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
   const handleRunComplete = useCallback(() => {
     setRunActive(false);
     setFileTreeRefreshKey((prev) => prev + 1);
-    setPreviewAutoStart(true);
     setPreviewRefreshKey((prev) => prev + 1);
   }, []);
 
@@ -271,44 +273,13 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
       <ProjectHeader
         projectId={projectId}
         projectName={projectName}
-        uploading={uploading}
-        onDesignPackUploaded={handleDesignPackUpload}
-        canRun={!!activePackId}
+        canRun={!!activeDesignDir}
         runActive={runActive}
+        onNewProject={() => setShowOverlay(true)}
         onRun={handleRun}
         onStop={handleStop}
+        onRename={handleRename}
       />
-
-      {/* Upload result banner */}
-      {uploadResult && (
-        <div
-          className={`flex items-center gap-2 px-4 py-2 text-sm border-b ${
-            uploadResult.type === "success"
-              ? "bg-green-50 text-green-800 border-green-200"
-              : uploadResult.type === "validation_error"
-              ? "bg-amber-50 text-amber-800 border-amber-200"
-              : "bg-red-50 text-red-800 border-red-200"
-          }`}
-        >
-          <span className="flex-1">
-            {uploadResult.type === "success" && uploadResult.message}
-            {uploadResult.type === "validation_error" && (
-              <>
-                <strong>Validation errors</strong> (pack {uploadResult.packId}
-                ):{" "}
-                {uploadResult.validationErrors?.join("; ")}
-              </>
-            )}
-            {uploadResult.type === "error" && uploadResult.message}
-          </span>
-          <button
-            onClick={dismissResult}
-            className="text-current opacity-60 hover:opacity-100 font-medium"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
 
       <div className="flex-1 overflow-hidden">
         <ThreePaneLayout
@@ -316,10 +287,9 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
           fileTreeRefreshKey={fileTreeRefreshKey}
           runActive={runActive}
           onRunComplete={handleRunComplete}
-          previewAutoStart={previewAutoStart}
           previewRefreshKey={previewRefreshKey}
           previewRoute={targetRoute}
-          packId={activePackId}
+          designDir={activeDesignDir}
           viewingArtifact={viewingArtifact}
           onArtifactClick={handleArtifactClick}
           onCloseArtifact={handleCloseArtifact}
@@ -332,11 +302,21 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
           bestIterationId={bestIterationId}
           onViewBest={handleViewBest}
           onBestUpdated={handleBestUpdated}
+          autoExpandPaths={autoExpandPaths}
         />
       </div>
 
       {isFullscreen && fullscreenUrl && (
         <FullscreenPreview previewUrl={fullscreenUrl} onExit={handleExitFullscreen} />
+      )}
+
+      {showOverlay && (
+        <NewProjectOverlay
+          projectId={projectId}
+          projectName={projectName}
+          onClose={() => setShowOverlay(false)}
+          onComplete={handleNewProjectComplete}
+        />
       )}
     </div>
   );

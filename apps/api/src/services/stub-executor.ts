@@ -11,7 +11,7 @@ export class StubExecutor extends EventEmitter implements Executor {
   private stopped = false;
 
   start(options: ExecutorOptions): void {
-    const { projectId, packId, runId } = options;
+    const { projectId, designDir, runId } = options;
     this.stopped = false;
 
     const rootId = "root";
@@ -23,7 +23,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       // Root node created
       {
         delayMs: 0,
-        event: makeEvent(projectId, packId, rootId, "nodeCreated", {
+        event: makeEvent(projectId, designDir, rootId, "nodeCreated", {
           stepKey: "run",
           title: `Run ${runId.slice(0, 8)}`,
           status: "running",
@@ -31,7 +31,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       },
       {
         delayMs: 100,
-        event: makeEvent(projectId, packId, rootId, "nodeStarted", {
+        event: makeEvent(projectId, designDir, rootId, "nodeStarted", {
           stepKey: "run",
           title: `Run ${runId.slice(0, 8)}`,
           status: "running",
@@ -41,7 +41,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       // Code Generation step
       {
         delayMs: 500,
-        event: makeEvent(projectId, packId, codeGenId, "nodeCreated", {
+        event: makeEvent(projectId, designDir, codeGenId, "nodeCreated", {
           stepKey: "codeGen",
           title: "Code Generation",
           status: "queued",
@@ -49,7 +49,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       },
       {
         delayMs: 800,
-        event: makeEvent(projectId, packId, codeGenId, "nodeStarted", {
+        event: makeEvent(projectId, designDir, codeGenId, "nodeStarted", {
           stepKey: "codeGen",
           title: "Code Generation",
           status: "running",
@@ -57,21 +57,21 @@ export class StubExecutor extends EventEmitter implements Executor {
       },
       {
         delayMs: 1500,
-        event: makeEvent(projectId, packId, codeGenId, "nodeProgress", {
+        event: makeEvent(projectId, designDir, codeGenId, "nodeProgress", {
           message: "Generating component structure...",
           progressPct: 30,
         }),
       },
       {
         delayMs: 2500,
-        event: makeEvent(projectId, packId, codeGenId, "nodeProgress", {
+        event: makeEvent(projectId, designDir, codeGenId, "nodeProgress", {
           message: "Writing styles and layout...",
           progressPct: 70,
         }),
       },
       {
         delayMs: 3500,
-        event: makeEvent(projectId, packId, codeGenId, "nodeFinished", {
+        event: makeEvent(projectId, designDir, codeGenId, "nodeFinished", {
           status: "success",
           message: "Generated 3 components",
         }),
@@ -80,7 +80,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       // Screenshot step
       {
         delayMs: 4000,
-        event: makeEvent(projectId, packId, screenshotId, "nodeCreated", {
+        event: makeEvent(projectId, designDir, screenshotId, "nodeCreated", {
           stepKey: "screenshot",
           title: "Screenshot Capture",
           status: "queued",
@@ -88,7 +88,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       },
       {
         delayMs: 4200,
-        event: makeEvent(projectId, packId, screenshotId, "nodeStarted", {
+        event: makeEvent(projectId, designDir, screenshotId, "nodeStarted", {
           stepKey: "screenshot",
           title: "Screenshot Capture",
           status: "running",
@@ -96,14 +96,14 @@ export class StubExecutor extends EventEmitter implements Executor {
       },
       {
         delayMs: 5000,
-        event: makeEvent(projectId, packId, screenshotId, "nodeProgress", {
+        event: makeEvent(projectId, designDir, screenshotId, "nodeProgress", {
           message: "Capturing viewport at 1280×800...",
           progressPct: 50,
         }),
       },
       {
         delayMs: 6000,
-        event: makeEvent(projectId, packId, screenshotId, "nodeFinished", {
+        event: makeEvent(projectId, designDir, screenshotId, "nodeFinished", {
           status: "success",
           message: "Screenshot captured",
         }),
@@ -112,7 +112,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       // Scoring step
       {
         delayMs: 6200,
-        event: makeEvent(projectId, packId, scoringId, "nodeCreated", {
+        event: makeEvent(projectId, designDir, scoringId, "nodeCreated", {
           stepKey: "scoring",
           title: "Visual Scoring",
           status: "queued",
@@ -120,7 +120,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       },
       {
         delayMs: 6400,
-        event: makeEvent(projectId, packId, scoringId, "nodeStarted", {
+        event: makeEvent(projectId, designDir, scoringId, "nodeStarted", {
           stepKey: "scoring",
           title: "Visual Scoring",
           status: "running",
@@ -128,7 +128,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       },
       {
         delayMs: 7500,
-        event: makeEvent(projectId, packId, scoringId, "nodeFinished", {
+        event: makeEvent(projectId, designDir, scoringId, "nodeFinished", {
           status: "success",
           message: "Score: 0.82",
           score: {
@@ -144,7 +144,7 @@ export class StubExecutor extends EventEmitter implements Executor {
       // Root finished
       {
         delayMs: 8000,
-        event: makeEvent(projectId, packId, rootId, "nodeFinished", {
+        event: makeEvent(projectId, designDir, rootId, "nodeFinished", {
           status: "success",
           message: "Run complete — overall score: 0.82",
           score: {
@@ -189,7 +189,7 @@ let eventCounter = 0;
 
 function makeEvent(
   projectId: string,
-  packId: string,
+  designDir: string,
   nodeId: string,
   type: AgentEvent["type"],
   payload: AgentEvent["payload"]
@@ -198,7 +198,7 @@ function makeEvent(
   return {
     eventId: `evt-${eventCounter}-${Date.now()}`,
     projectId,
-    packId,
+    packId: designDir,
     nodeId,
     type,
     ts: new Date().toISOString(),

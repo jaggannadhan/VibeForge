@@ -5,6 +5,8 @@ import AdmZip from "adm-zip";
 import { designPackDir, designPackMetaPath } from "../lib/paths.js";
 import { validateDesignPack } from "./pack-validator.js";
 import type { ValidationResult } from "./pack-validator.js";
+import { generateDesignPack } from "./pack-generator.js";
+import { getProject } from "./project-service.js";
 
 export interface PackMeta {
   packId: string;
@@ -36,6 +38,12 @@ export async function processDesignPack(
   // Unwrap single root folder: if the zip contained one directory with
   // the actual files inside it, hoist those files up to packDir.
   await unwrapSingleRootFolder(packDir);
+
+  // Image-only upload: if no manifest.json, auto-generate pack files
+  if (!existsSync(join(packDir, "manifest.json"))) {
+    const projectMeta = await getProject(projectId);
+    await generateDesignPack(packDir, projectMeta?.name ?? "Untitled Project");
+  }
 
   // Validate
   const validation = await validateDesignPack(packDir);

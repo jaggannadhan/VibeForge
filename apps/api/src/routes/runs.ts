@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { RunService } from "../services/run-service.js";
 import { workspaceDir } from "../lib/paths.js";
@@ -7,17 +9,28 @@ export function runRoutes(runService: RunService) {
     // Start a new run
     app.post<{
       Params: { projectId: string };
-      Body: { packId: string };
+      Body: { designDir?: string; packId?: string };
     }>("/projects/:projectId/runs", async (request, reply) => {
       const { projectId } = request.params;
-      const { packId } = request.body;
+      const { designDir, packId } = request.body;
 
-      if (!packId) {
-        return reply.status(400).send({ error: "packId is required" });
+      if (!designDir && !packId) {
+        return reply.status(400).send({ error: "designDir is required" });
       }
 
       const wsPath = workspaceDir(projectId);
-      const state = runService.startRun(projectId, packId, wsPath);
+
+      // If designDir is provided, validate it exists in the workspace
+      if (designDir) {
+        const absDesignDir = join(wsPath, designDir);
+        if (!existsSync(join(absDesignDir, "manifest.json"))) {
+          return reply.status(400).send({
+            error: `Design directory "${designDir}" does not contain manifest.json`,
+          });
+        }
+      }
+
+      const state = runService.startRun(projectId, designDir || packId!, wsPath);
 
       return reply.status(201).send({
         runId: state.runId,
