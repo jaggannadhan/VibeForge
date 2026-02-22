@@ -7,7 +7,7 @@ import type { Executor, PreviewProvider } from "./executor.js";
 export interface RunState {
   runId: string;
   projectId: string;
-  packId: string;
+  designDir: string;
   status: TraceStatus;
   tree: IterationNode | null;
   startedAt: string;
@@ -34,7 +34,7 @@ export class RunService extends EventEmitter {
 
   startRun(
     projectId: string,
-    packId: string,
+    designDir: string,
     workspacePath: string
   ): RunState {
     // Stop any existing run for this project
@@ -50,7 +50,7 @@ export class RunService extends EventEmitter {
     const state: RunState & { executor: Executor } = {
       runId,
       projectId,
-      packId,
+      designDir,
       status: "running",
       tree: null,
       startedAt: new Date().toISOString(),
@@ -75,7 +75,7 @@ export class RunService extends EventEmitter {
     // Start the executor
     executor.start({
       projectId,
-      packId,
+      designDir,
       workspacePath,
       runId,
       previewProvider: this.previewProvider,
@@ -109,7 +109,7 @@ function toPublicState(state: RunState & { executor: Executor }): RunState {
   return {
     runId: state.runId,
     projectId: state.projectId,
-    packId: state.packId,
+    designDir: state.designDir,
     status: state.status,
     tree: state.tree,
     startedAt: state.startedAt,

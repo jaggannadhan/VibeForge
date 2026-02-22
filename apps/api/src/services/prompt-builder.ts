@@ -109,9 +109,13 @@ Target: ${targetId}
 Primary file: src/${fileHint}
 Design viewport: ${viewportInfo}
 
+## Baseline Design Images
+
+The baseline design image(s) are attached above this message. You MUST replicate the visual design shown in these images as closely as possible. Study the layout, colors, typography, spacing, icons, cards, charts, tables, navigation elements, and overall structure in the design image(s), then implement them faithfully using the technology stack available.
+
 ## Design Specification (IR Nodes)
 
-The following nodes describe the visual elements on this page. Each node includes:
+The following nodes provide additional structural guidance. Use them together with the baseline images:
 - Layout targets: bounding box (x, y, w, h in pixels at ${viewportInfo} viewport) for spatial guidance
 - Style targets: font, color, and decoration specifications
 - A11y targets: ARIA roles and labels

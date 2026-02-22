@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { newProjectId } from "../lib/ids.js";
-import { createProject, getProject } from "../services/project-service.js";
+import { createProject, getProject, updateProject } from "../services/project-service.js";
 
 export async function projectRoutes(app: FastifyInstance): Promise<void> {
   // POST /api/projects — create project
@@ -16,6 +16,25 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       createdAt: meta.createdAt,
     });
   });
+
+  // PATCH /api/projects/:projectId — update project (e.g. rename)
+  app.patch<{ Params: { projectId: string } }>(
+    "/projects/:projectId",
+    async (request, reply) => {
+      const { projectId } = request.params;
+      const body = request.body as { name?: string } | null;
+      if (!body?.name) {
+        return reply.status(400).send({ error: "name is required" });
+      }
+      try {
+        const meta = await updateProject(projectId, { name: body.name });
+        return reply.send({ projectId: meta.projectId, name: meta.name });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        return reply.status(404).send({ error: msg });
+      }
+    }
+  );
 
   // GET /api/projects/:projectId — get project metadata
   app.get<{ Params: { projectId: string } }>(

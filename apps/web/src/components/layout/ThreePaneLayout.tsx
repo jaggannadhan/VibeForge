@@ -1,11 +1,14 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
 import type { ArtifactLink } from "@vibe-studio/shared";
+import type { SelectedFile } from "@/lib/types";
+import { getFileContent } from "@/lib/api";
 import { FileTreePane } from "./FileTreePane";
 import { CenterPane } from "./CenterPane";
 import { TracePane } from "./TracePane";
@@ -15,10 +18,9 @@ interface ThreePaneLayoutProps {
   fileTreeRefreshKey?: number;
   runActive?: boolean;
   onRunComplete?: () => void;
-  previewAutoStart?: boolean;
   previewRefreshKey?: number;
   previewRoute?: string;
-  packId?: string | null;
+  designDir?: string | null;
   viewingArtifact?: ArtifactLink | null;
   onArtifactClick?: (artifact: ArtifactLink) => void;
   onCloseArtifact?: () => void;
@@ -32,6 +34,7 @@ interface ThreePaneLayoutProps {
   bestIterationId?: number | null;
   onViewBest?: () => void;
   onBestUpdated?: (bestIterationId: number | null) => void;
+  autoExpandPaths?: string[];
 }
 
 export function ThreePaneLayout({
@@ -39,10 +42,9 @@ export function ThreePaneLayout({
   fileTreeRefreshKey,
   runActive = false,
   onRunComplete,
-  previewAutoStart,
   previewRefreshKey,
   previewRoute,
-  packId,
+  designDir,
   viewingArtifact,
   onArtifactClick,
   onCloseArtifact,
@@ -55,22 +57,70 @@ export function ThreePaneLayout({
   bestIterationId,
   onViewBest,
   onBestUpdated,
+  autoExpandPaths,
 }: ThreePaneLayoutProps) {
+  // Open file tabs state
+  const [openFiles, setOpenFiles] = useState<SelectedFile[]>([]);
+  const [activeFileId, setActiveFileId] = useState<string | null>(null);
+
+  const handleOpenFile = useCallback(
+    async (path: string) => {
+      // If already open, just activate it
+      const existing = openFiles.find((f) => f.path === path);
+      if (existing) {
+        setActiveFileId(path);
+        return;
+      }
+      try {
+        const res = await getFileContent(projectId, path);
+        const file: SelectedFile = {
+          path: res.path,
+          name: path.split("/").pop() || path,
+          content: res.content,
+          language: res.language,
+        };
+        setOpenFiles((prev) => [...prev, file]);
+        setActiveFileId(path);
+      } catch (err) {
+        console.error("Failed to load file:", err);
+      }
+    },
+    [projectId, openFiles]
+  );
+
+  const handleCloseFile = useCallback(
+    (path: string) => {
+      setOpenFiles((prev) => prev.filter((f) => f.path !== path));
+      if (activeFileId === path) {
+        setActiveFileId(null);
+      }
+    },
+    [activeFileId]
+  );
+
+  const handleClearFileTab = useCallback(() => {
+    setActiveFileId(null);
+  }, []);
+
   return (
     <ResizablePanelGroup direction="horizontal" className="h-full w-full">
-      {/* Left pane — File Tree + Viewer */}
+      {/* Left pane — File Tree */}
       <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
-        <FileTreePane projectId={projectId} refreshKey={fileTreeRefreshKey} />
+        <FileTreePane
+          projectId={projectId}
+          refreshKey={fileTreeRefreshKey}
+          onOpenFile={handleOpenFile}
+          autoExpandPaths={autoExpandPaths}
+        />
       </ResizablePanel>
 
       <ResizableHandle withHandle />
 
-      {/* Center pane — Preview + Baseline tabs */}
+      {/* Center pane — Preview + Baseline + File tabs */}
       <ResizablePanel defaultSize={50} minSize={30}>
         <CenterPane
           projectId={projectId}
-          packId={packId ?? null}
-          autoStart={previewAutoStart}
+          designDir={designDir ?? null}
           refreshKey={previewRefreshKey}
           route={previewRoute}
           viewingArtifact={viewingArtifact}
@@ -82,6 +132,11 @@ export function ThreePaneLayout({
           onFullscreen={onFullscreen}
           bestIterationId={bestIterationId}
           onViewBest={onViewBest}
+          openFiles={openFiles}
+          activeFileId={activeFileId}
+          onSelectFileTab={setActiveFileId}
+          onCloseFileTab={handleCloseFile}
+          onClearFileTab={handleClearFileTab}
         />
       </ResizablePanel>
 

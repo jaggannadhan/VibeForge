@@ -2,26 +2,20 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { FileTreeNode } from "@vibe-studio/shared";
-import type { SelectedFile } from "@/lib/types";
-import { getFileTree, getFileContent } from "@/lib/api";
+import { getFileTree } from "@/lib/api";
 import { FileTree } from "@/components/filetree/FileTree";
-import { FileViewer } from "@/components/filetree/FileViewer";
 import { Spinner } from "@/components/common/Spinner";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@/components/ui/resizable";
 
 interface FileTreePaneProps {
   projectId: string;
   refreshKey?: number;
+  onOpenFile: (path: string) => void;
+  autoExpandPaths?: string[];
 }
 
-export function FileTreePane({ projectId, refreshKey }: FileTreePaneProps) {
+export function FileTreePane({ projectId, refreshKey, onOpenFile, autoExpandPaths }: FileTreePaneProps) {
   const [files, setFiles] = useState<FileTreeNode[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -44,17 +38,11 @@ export function FileTreePane({ projectId, refreshKey }: FileTreePaneProps) {
   }, [projectId, refreshKey]);
 
   const handleSelectFile = useCallback(
-    async (path: string) => {
+    (path: string) => {
       setSelectedPath(path);
-      const res = await getFileContent(projectId, path);
-      setSelectedFile({
-        path: res.path,
-        name: path.split("/").pop() || path,
-        content: res.content,
-        language: res.language,
-      });
+      onOpenFile(path);
     },
-    [projectId]
+    [onOpenFile]
   );
 
   if (loading) {
@@ -66,27 +54,20 @@ export function FileTreePane({ projectId, refreshKey }: FileTreePaneProps) {
   }
 
   return (
-    <ResizablePanelGroup direction="vertical" className="h-full">
-      <ResizablePanel defaultSize={40} minSize={20}>
-        <div className="flex h-full flex-col">
-          <div className="border-b px-3 py-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Files
-            </h3>
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <FileTree
-              nodes={files}
-              selectedPath={selectedPath}
-              onSelectFile={handleSelectFile}
-            />
-          </div>
-        </div>
-      </ResizablePanel>
-      <ResizableHandle />
-      <ResizablePanel defaultSize={60} minSize={20}>
-        <FileViewer file={selectedFile} />
-      </ResizablePanel>
-    </ResizablePanelGroup>
+    <div className="flex h-full flex-col">
+      <div className="border-b px-3 py-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Files
+        </h3>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        <FileTree
+          nodes={files}
+          selectedPath={selectedPath}
+          onSelectFile={handleSelectFile}
+          autoExpandPaths={autoExpandPaths}
+        />
+      </div>
+    </div>
   );
 }

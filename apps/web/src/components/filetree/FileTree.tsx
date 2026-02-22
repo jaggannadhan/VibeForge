@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { FileTreeNode } from "@vibe-studio/shared";
 import {
   ChevronRight,
@@ -16,6 +16,7 @@ interface FileTreeProps {
   nodes: FileTreeNode[];
   selectedPath: string | null;
   onSelectFile: (path: string) => void;
+  autoExpandPaths?: string[];
 }
 
 interface TreeNodeProps {
@@ -125,10 +126,29 @@ function getDefaultExpanded(nodes: FileTreeNode[], depth = 0): Set<string> {
   return paths;
 }
 
-export function FileTree({ nodes, selectedPath, onSelectFile }: FileTreeProps) {
+export function FileTree({ nodes, selectedPath, onSelectFile, autoExpandPaths }: FileTreeProps) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
     () => getDefaultExpanded(nodes)
   );
+
+  // Auto-expand specific paths when requested (e.g. after design file generation)
+  const prevAutoExpand = useRef<string[] | undefined>();
+  useEffect(() => {
+    if (
+      autoExpandPaths &&
+      autoExpandPaths.length > 0 &&
+      autoExpandPaths !== prevAutoExpand.current
+    ) {
+      prevAutoExpand.current = autoExpandPaths;
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        for (const p of autoExpandPaths) {
+          next.add(p);
+        }
+        return next;
+      });
+    }
+  }, [autoExpandPaths]);
 
   const toggleExpanded = (path: string) => {
     setExpandedPaths((prev) => {

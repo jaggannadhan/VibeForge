@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, type KeyboardEvent } from "react";
-import { Monitor, Play, Square, RefreshCw, Maximize2, Loader2, Package, Zap, Smartphone, Tablet } from "lucide-react";
+import { Monitor, Square, RefreshCw, Maximize2, Loader2, Package, Zap, Smartphone, Tablet } from "lucide-react";
 import {
   startPreview,
   stopPreview,
@@ -12,7 +12,6 @@ import { cn } from "@/lib/utils";
 
 interface PreviewPaneProps {
   projectId: string;
-  autoStart?: boolean;
   refreshKey?: number;
   route?: string;
   /** When set, bypass normal polling and render this URL directly in the iframe */
@@ -36,7 +35,7 @@ const STATUS_LABELS: Record<PreviewInfo["status"], string> = {
   error: "Error",
 };
 
-export function PreviewPane({ projectId, autoStart, refreshKey, route, overridePreviewUrl, onFullscreen, onRefreshLatest }: PreviewPaneProps) {
+export function PreviewPane({ projectId, refreshKey, route, overridePreviewUrl, onFullscreen, onRefreshLatest }: PreviewPaneProps) {
   const [preview, setPreview] = useState<PreviewInfo>({
     previewUrl: null,
     status: "stopped",
@@ -120,13 +119,13 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route, overrideP
     if (iframe) iframe.src = iframe.src;
   }, []);
 
-  // Auto-start preview when autoStart becomes true and preview is stopped
+  // Auto-start preview on mount
   useEffect(() => {
-    if (autoStart && !autoStartTriggered.current && preview.status === "stopped" && !starting) {
+    if (!autoStartTriggered.current && !starting) {
       autoStartTriggered.current = true;
       handleStart();
     }
-  }, [autoStart, preview.status, starting, handleStart]);
+  }, [handleStart, starting]);
 
   // Auto-refresh iframe when refreshKey changes and preview is ready
   useEffect(() => {
@@ -417,25 +416,20 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route, overrideP
     );
   }
 
-  // ── Idle state: show start button ─────────────────────────────────
+  // ── Idle/stopped state: show starting skeleton (auto-start in progress) ──
   return (
-    <div className="flex h-full items-center justify-center text-muted-foreground">
-      <div className="text-center max-w-sm">
-        <Monitor size={48} className="mx-auto mb-4 opacity-20" />
-        <p className="text-base font-medium text-foreground/70">
-          Preview not running
-        </p>
-        <p className="text-sm mt-2 text-muted-foreground/80 leading-relaxed">
-          Start the dev server to see a live preview of your workspace.
-        </p>
-        <button
-          onClick={handleStart}
-          disabled={starting}
-          className="mt-4 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-        >
-          <Play size={14} />
-          Start Preview
-        </button>
+    <div className="flex h-full items-center justify-center">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <Zap size={32} className="text-amber-500 animate-pulse" />
+        <div>
+          <p className="text-sm font-medium text-foreground/80">
+            Starting preview...
+          </p>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            This may take a minute on first run
+          </p>
+        </div>
+        <Loader2 size={16} className="animate-spin text-muted-foreground" />
       </div>
     </div>
   );

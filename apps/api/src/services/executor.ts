@@ -13,7 +13,7 @@ export interface PreviewProvider {
 
 export interface ExecutorOptions {
   projectId: string;
-  packId: string;
+  designDir: string;
   workspacePath: string;
   runId: string;
   previewProvider?: PreviewProvider;

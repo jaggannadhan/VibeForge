@@ -73,3 +73,11 @@ export function runtimeDir(
 ): string {
   return join(projectDir(projectId), "runtime", `iter-${iterationIndex}`, "workspace");
 }
+
+export function uploadsDir(projectId: string, uploadId: string): string {
+  return join(projectDir(projectId), "uploads", uploadId);
+}
+
+export function workspaceDesignsDir(projectId: string, designName: string): string {
+  return join(workspaceDir(projectId), "src", "designs", designName);
+}

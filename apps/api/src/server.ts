@@ -10,6 +10,7 @@ import { previewRoutes } from "./routes/preview.js";
 import { runRoutes } from "./routes/runs.js";
 import { wsRoutes } from "./routes/ws.js";
 import { artifactRoutes } from "./routes/artifacts.js";
+import { designZipRoutes } from "./routes/design-zip.js";
 import { RunService } from "./services/run-service.js";
 import { templateDir } from "./lib/paths.js";
 
@@ -47,6 +48,7 @@ async function main() {
   await app.register(runRoutes(runService), { prefix: "/api" });
   await app.register(wsRoutes(runService), { prefix: "/api" });
   await app.register(artifactRoutes, { prefix: "/api" });
+  await app.register(designZipRoutes, { prefix: "/api" });
 
   // Graceful shutdown — stop all preview processes
   const shutdown = async () => {
