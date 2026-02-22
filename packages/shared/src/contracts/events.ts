@@ -9,6 +9,7 @@ export type ArtifactKind =
   | "snapshotImage"
   | "scoreReportJson"
   | "scoreReportHtml"
+  | "overflowReport"
   | "diffPatch"
   | "log"
   | "previewUrl";
@@ -23,6 +24,11 @@ export interface ArtifactLink {
 }
 
 export type TraceStatus = "queued" | "running" | "success" | "error" | "skipped";
+
+export interface IterationDecision {
+  accepted: boolean;
+  reason: string;
+}
 
 export interface IterationNode {
   nodeId: string;
@@ -42,6 +48,9 @@ export interface IterationNode {
     perceptual?: number;
     deltaFromPrev?: number;
   };
+  decision?: IterationDecision;
+  isBest?: boolean;
+  focusArea?: string;
   artifacts?: ArtifactLink[];
   children?: IterationNode[];
 }
@@ -66,6 +75,9 @@ export interface AgentEvent {
     message?: string;
     progressPct?: number;
     score?: IterationNode["score"];
+    decision?: IterationDecision;
+    isBest?: boolean;
+    focusArea?: string;
     artifact?: ArtifactLink;
   };
 }

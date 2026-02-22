@@ -8,9 +8,10 @@ import { TraceNode } from "./TraceNode";
 interface TraceTreeProps {
   rootNode: IterationNode | null;
   onArtifactClick?: (artifact: ArtifactLink) => void;
+  onIterationClick?: (iterationIndex: number) => void;
 }
 
-export function TraceTree({ rootNode, onArtifactClick }: TraceTreeProps) {
+export function TraceTree({ rootNode, onArtifactClick, onIterationClick }: TraceTreeProps) {
   if (!rootNode) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -28,7 +29,13 @@ export function TraceTree({ rootNode, onArtifactClick }: TraceTreeProps) {
   return (
     <ScrollArea className="h-full">
       <div className="py-2">
-        <TraceNode node={rootNode} depth={0} defaultExpanded={true} onArtifactClick={onArtifactClick} />
+        <TraceNode
+          node={rootNode}
+          depth={0}
+          defaultExpanded={true}
+          onArtifactClick={onArtifactClick}
+          onIterationClick={onIterationClick}
+        />
       </div>
     </ScrollArea>
   );

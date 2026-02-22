@@ -188,12 +188,16 @@ function applyEvent(
       break;
     case "nodeProgress":
       node.message = event.payload.message;
+      if (event.payload.focusArea) node.focusArea = event.payload.focusArea;
       break;
     case "nodeFinished":
       node.status = event.payload.status || "success";
       node.finishedAt = event.ts;
       if (event.payload.message) node.message = event.payload.message;
       if (event.payload.score) node.score = event.payload.score;
+      if (event.payload.decision) node.decision = event.payload.decision;
+      if (event.payload.isBest !== undefined) node.isBest = event.payload.isBest;
+      if (event.payload.focusArea) node.focusArea = event.payload.focusArea;
       break;
     case "nodeFailed":
       node.status = "error";

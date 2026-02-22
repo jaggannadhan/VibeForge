@@ -11,10 +11,12 @@ interface TracePaneProps {
   runActive?: boolean;
   onRunComplete?: () => void;
   onArtifactClick?: (artifact: ArtifactLink) => void;
+  onIterationClick?: (iterationIndex: number) => void;
+  onBestUpdated?: (bestIterationId: number | null) => void;
 }
 
-export function TracePane({ projectId, runActive = false, onRunComplete, onArtifactClick }: TracePaneProps) {
-  const { tree, runStatus } = useTraceStream(projectId, runActive);
+export function TracePane({ projectId, runActive = false, onRunComplete, onArtifactClick, onIterationClick, onBestUpdated }: TracePaneProps) {
+  const { tree, runStatus, bestIterationId } = useTraceStream(projectId, runActive);
 
   // Fire onRunComplete when runStatus transitions to "success"
   const prevStatus = useRef(runStatus);
@@ -24,6 +26,15 @@ export function TracePane({ projectId, runActive = false, onRunComplete, onArtif
     }
     prevStatus.current = runStatus;
   }, [runStatus, onRunComplete]);
+
+  // Notify parent when best iteration changes
+  const prevBest = useRef(bestIterationId);
+  useEffect(() => {
+    if (bestIterationId !== prevBest.current) {
+      onBestUpdated?.(bestIterationId);
+      prevBest.current = bestIterationId;
+    }
+  }, [bestIterationId, onBestUpdated]);
 
   const isLive = runStatus === "running";
 
@@ -48,7 +59,11 @@ export function TracePane({ projectId, runActive = false, onRunComplete, onArtif
         )}
       </div>
       <div className="flex-1 overflow-hidden">
-        <TraceTree rootNode={tree} onArtifactClick={onArtifactClick} />
+        <TraceTree
+          rootNode={tree}
+          onArtifactClick={onArtifactClick}
+          onIterationClick={onIterationClick}
+        />
       </div>
     </div>
   );

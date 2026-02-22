@@ -93,3 +93,58 @@ export interface GetRunReportResponse {
   overallScore?: number;
   iterationCount: number;
 }
+
+// --- Iterations ---
+
+export interface IterationSummary {
+  iterationIndex: number;
+  status: TraceStatus;
+  hasSnapshot: boolean;
+  score?: {
+    overall?: number;
+    layout?: number;
+    style?: number;
+    a11y?: number;
+    perceptual?: number;
+  };
+}
+
+export interface GetIterationsResponse {
+  projectId: string;
+  iterations: IterationSummary[];
+}
+
+export interface StartHistoricalPreviewResponse {
+  previewUrl: string | null;
+  status: string;
+  iterationId: number;
+}
+
+export interface GetLatestPreviewResponse {
+  previewUrl: string | null;
+  status: string;
+}
+
+// --- Run State ---
+
+export interface GetRunStateResponse {
+  runId: string;
+  projectId: string;
+  status: TraceStatus;
+  bestIterationIndex: number | null;
+  startedAt: string;
+}
+
+export interface RevertToBestResponse {
+  restoredIteration: number;
+  previewUrl: string | null;
+  status: string;
+}
+
+export interface GetIterationDecisionResponse {
+  iterationIndex: number;
+  decision: { accepted: boolean; reason: string } | null;
+  isBest: boolean;
+  focusArea: string | null;
+  score: IterationSummary["score"] | null;
+}

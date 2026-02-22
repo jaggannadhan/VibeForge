@@ -48,3 +48,28 @@ export function screenshotPath(
 ): string {
   return join(snapshotsDir(projectId, runId), `${breakpointId}.png`);
 }
+
+export function iterSnapshotsDir(projectId: string): string {
+  return join(projectDir(projectId), "snapshots");
+}
+
+export function snapshotArchivePath(
+  projectId: string,
+  iterationIndex: number
+): string {
+  return join(iterSnapshotsDir(projectId), `iter-${iterationIndex}.tar.gz`);
+}
+
+export function snapshotMetaPath(
+  projectId: string,
+  iterationIndex: number
+): string {
+  return join(iterSnapshotsDir(projectId), `iter-${iterationIndex}.json`);
+}
+
+export function runtimeDir(
+  projectId: string,
+  iterationIndex: number
+): string {
+  return join(projectDir(projectId), "runtime", `iter-${iterationIndex}`, "workspace");
+}

@@ -43,7 +43,7 @@ async function main() {
   await app.register(projectRoutes, { prefix: "/api" });
   await app.register(designPackRoutes, { prefix: "/api" });
   await app.register(workspaceRoutes, { prefix: "/api" });
-  await app.register(previewRoutes(sandboxManager), { prefix: "/api" });
+  await app.register(previewRoutes(sandboxManager, runService), { prefix: "/api" });
   await app.register(runRoutes(runService), { prefix: "/api" });
   await app.register(wsRoutes(runService), { prefix: "/api" });
   await app.register(artifactRoutes, { prefix: "/api" });

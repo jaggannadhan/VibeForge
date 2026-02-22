@@ -8,10 +8,18 @@ import {
 } from "@vibe-studio/shared";
 import type { AgentEvent } from "@vibe-studio/shared";
 import type { Executor, ExecutorOptions, PreviewProvider } from "./executor.js";
-import { designPackDir } from "../lib/paths.js";
+import { designPackDir, snapshotsDir } from "../lib/paths.js";
 import { buildCodeGenPrompt } from "./prompt-builder.js";
 import { parseGeneratedFiles } from "./response-parser.js";
 import { ScreenshotService } from "./screenshot-service.js";
+import { ScoringService } from "./scoring-service.js";
+import { createSnapshot, restoreSnapshot } from "./snapshot-service.js";
+import { Scorekeeper } from "./scorekeeper.js";
+import { PatchPlanner } from "./patch-planner.js";
+import type { PatchPlan } from "./patch-planner.js";
+import { LockManager } from "./lock-manager.js";
+import { StopConditions } from "./stop-conditions.js";
+import { OverflowDetector } from "./overflow-detector.js";
 
 const MODEL = "claude-sonnet-4-20250514";
 const MAX_TOKENS = 8192;
@@ -40,9 +48,7 @@ export class AiExecutor extends EventEmitter implements Executor {
     this.abortController = new AbortController();
 
     const rootId = "root";
-    const codeGenId = "root-codegen";
-    const screenshotId = "root-screenshot";
-    const scoringId = "root-scoring";
+    let currentIterNodeId = rootId;
     let currentStep: "codeGen" | "screenshot" | "scoring" = "codeGen";
 
     try {
@@ -60,352 +66,536 @@ export class AiExecutor extends EventEmitter implements Executor {
 
       if (this.stopped) return;
 
-      // ── Code Generation step ────────────────────────────────────
-      this.emitEvent(projectId, packId, codeGenId, "nodeCreated", {
-        stepKey: "codeGen",
-        title: "Code Generation",
-        status: "queued",
-      });
-      this.emitEvent(projectId, packId, codeGenId, "nodeStarted", {
-        stepKey: "codeGen",
-        title: "Code Generation",
-        status: "running",
-      });
-
-      // Read design pack
-      this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
-        message: "Reading design pack...",
-        progressPct: 10,
-      });
-
+      // ── Read design pack (once, before loop) ──────────────────
       const packDir = designPackDir(projectId, packId);
-      const manifestRaw = await readFile(
-        join(packDir, "manifest.json"),
-        "utf-8"
-      );
-      const irRaw = await readFile(
-        join(packDir, "design-ir.json"),
-        "utf-8"
-      );
+      const manifestRaw = await readFile(join(packDir, "manifest.json"), "utf-8");
+      const irRaw = await readFile(join(packDir, "design-ir.json"), "utf-8");
 
       const manifest = ManifestSchema.parse(JSON.parse(manifestRaw));
       const designIr = DesignIrSchema.parse(JSON.parse(irRaw));
 
-      if (this.stopped) return;
-
-      // Find target
       const targetId = manifest.runDefaults.targetId;
-      const targetIr = designIr.targets.find(
-        (t) => t.targetId === targetId
-      );
-      if (!targetIr) {
-        throw new Error(
-          `Target "${targetId}" not found in design-ir.json`
-        );
-      }
+      const threshold = manifest.runDefaults.threshold;
+      const maxIterations = manifest.runDefaults.maxIterations;
 
-      const manifestTarget = manifest.targets.find(
-        (t) => t.targetId === targetId
-      );
-      if (!manifestTarget) {
-        throw new Error(
-          `Target "${targetId}" not found in manifest.json`
-        );
-      }
+      const targetIr = designIr.targets.find((t) => t.targetId === targetId);
+      if (!targetIr) throw new Error(`Target "${targetId}" not found in design-ir.json`);
 
-      // Read workspace context
-      this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
-        message: "Building prompt...",
-        progressPct: 20,
-      });
+      const manifestTarget = manifest.targets.find((t) => t.targetId === targetId);
+      if (!manifestTarget) throw new Error(`Target "${targetId}" not found in manifest.json`);
 
+      // Read workspace context (once)
       const layoutPath = join(workspacePath, "src", "app", "layout.tsx");
-      const globalsPath = join(
-        workspacePath,
-        "src",
-        "app",
-        "globals.css"
-      );
-
+      const globalsPath = join(workspacePath, "src", "app", "globals.css");
       let existingLayout = "";
       let existingGlobalsCss = "";
-      try {
-        existingLayout = await readFile(layoutPath, "utf-8");
-      } catch {
-        // layout.tsx may not exist yet
-      }
-      try {
-        existingGlobalsCss = await readFile(globalsPath, "utf-8");
-      } catch {
-        // globals.css may not exist yet
-      }
-
-      if (this.stopped) return;
-
-      // Build prompt
-      const { system, user } = buildCodeGenPrompt({
-        projectName: manifest.projectName,
-        targetId,
-        route: manifestTarget.route,
-        fileHint: manifestTarget.entry.fileHint,
-        nodes: targetIr.nodes,
-        breakpoints: manifest.breakpoints,
-        existingLayout,
-        existingGlobalsCss,
-      });
-
-      // Call Claude API
-      this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
-        message: "Calling Claude API...",
-        progressPct: 30,
-      });
-
-      const client = new Anthropic();
-      const response = await client.messages.create(
-        {
-          model: MODEL,
-          max_tokens: MAX_TOKENS,
-          system,
-          messages: [{ role: "user", content: user }],
-        },
-        { signal: this.abortController.signal }
-      );
-
-      if (this.stopped) return;
-
-      // Extract text from response
-      const responseText = response.content
-        .filter((block) => block.type === "text")
-        .map((block) => {
-          if (block.type === "text") return block.text;
-          return "";
-        })
-        .join("");
-
-      // Parse generated files
-      this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
-        message: "Parsing response...",
-        progressPct: 80,
-      });
-
-      const generatedFiles = parseGeneratedFiles(responseText);
-
-      // Write files to workspace
-      this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
-        message: `Writing ${generatedFiles.length} files...`,
-        progressPct: 90,
-      });
-
-      for (const file of generatedFiles) {
-        const fullPath = join(workspacePath, file.path);
-        await mkdir(dirname(fullPath), { recursive: true });
-        await writeFile(fullPath, file.content, "utf-8");
-      }
-
-      if (this.stopped) return;
-
-      // Code gen complete
-      this.emitEvent(projectId, packId, codeGenId, "nodeFinished", {
-        status: "success",
-        message: `Generated ${generatedFiles.length} file${generatedFiles.length === 1 ? "" : "s"}`,
-      });
-
-      // Emit artifact links for each generated file
-      for (const file of generatedFiles) {
-        this.emitEvent(projectId, packId, codeGenId, "artifactAdded", {
-          artifact: {
-            id: `file-${file.path.replace(/\//g, "-")}`,
-            kind: "workspaceFile",
-            label: file.path,
-            href: file.path,
-          },
-        });
-      }
-
-      // ── Screenshot step ─────────────────────────────────────────
-      currentStep = "screenshot";
-      console.log("[AiExecutor] Starting screenshot step");
-      this.emitEvent(projectId, packId, screenshotId, "nodeCreated", {
-        stepKey: "screenshot",
-        title: "Screenshot Capture",
-        status: "queued",
-      });
-      this.emitEvent(projectId, packId, screenshotId, "nodeStarted", {
-        stepKey: "screenshot",
-        title: "Screenshot Capture",
-        status: "running",
-      });
+      try { existingLayout = await readFile(layoutPath, "utf-8"); } catch { /* may not exist */ }
+      try { existingGlobalsCss = await readFile(globalsPath, "utf-8"); } catch { /* may not exist */ }
 
       if (this.stopped) return;
 
       if (!options.previewProvider) {
-        throw new Error(
-          "No preview provider available — cannot capture screenshots"
-        );
+        throw new Error("No preview provider available — cannot capture screenshots");
       }
 
-      // Ensure preview server is running
-      console.log("[AiExecutor] Waiting for preview server...");
-      this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
-        message: "Waiting for preview server...",
-        progressPct: 10,
-      });
+      const stateId = manifest.states[0].stateId;
+      const baselinesRoot = join(packDir, "baselines");
+      const client = new Anthropic();
+      const screenshotService = new ScreenshotService();
+      const scoringService = new ScoringService();
+      const overflowDetector = new OverflowDetector();
 
-      const previewUrl = await this.waitForPreview(
-        options.previewProvider,
-        projectId,
-        workspacePath
-      );
-      console.log("[AiExecutor] Preview ready at", previewUrl);
+      let previousScore: { overall: number; layout: number; style: number; a11y: number; perceptual: number } | null = null;
+      let finalScore = { overall: 0, layout: 0, style: 0, a11y: 0, perceptual: 0 };
+      const scorekeeper = new Scorekeeper(0.01);
+      const patchPlanner = new PatchPlanner();
+      const lockManager = new LockManager();
+      const stopConditions = new StopConditions({ maxIterations });
+      const runStartTime = Date.now();
+      let consecutiveRejections = 0;
+      const acceptedScoreHistory: number[] = [];
+      let currentPatchPlan: PatchPlan | undefined;
+      let lastOverflowIssues: { selector: string; nodeId: string | null; overflowPx: number }[] = [];
 
-      if (this.stopped) return;
+      // ── Iteration loop ────────────────────────────────────────
+      for (let iter = 0; iter < maxIterations; iter++) {
+        if (this.stopped) return;
 
-      // Warm up the target route — force Next.js to detect & compile new files
-      this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
-        message: "Waiting for route to compile...",
-        progressPct: 15,
-      });
+        const iterId = `root-iter${iter}`;
+        currentIterNodeId = iterId;
 
-      await this.warmUpRoute(previewUrl, manifestTarget.route);
+        this.emitEvent(projectId, packId, iterId, "nodeCreated", {
+          stepKey: "iteration",
+          title: `Iteration ${iter + 1}`,
+          status: "running",
+        });
+        this.emitEvent(projectId, packId, iterId, "nodeStarted", {
+          stepKey: "iteration",
+          title: `Iteration ${iter + 1}`,
+          status: "running",
+        });
 
-      if (this.stopped) return;
+        // ── Code Generation ───────────────────────────────────
+        currentStep = "codeGen";
+        const codeGenId = `${iterId}-codegen`;
 
-      // Create child nodes for each breakpoint before starting
-      console.log(`[AiExecutor] Launching browser for ${manifest.breakpoints.length} breakpoint(s)`);
-      this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
-        message: `Launching browser for ${manifest.breakpoints.length} breakpoint(s)...`,
-        progressPct: 20,
-      });
-
-      for (const bp of manifest.breakpoints) {
-        this.emitEvent(projectId, packId, `${screenshotId}-${bp.breakpointId}`, "nodeCreated", {
-          stepKey: "capture",
-          title: `${bp.breakpointId} (${bp.width}×${bp.height})`,
+        this.emitEvent(projectId, packId, codeGenId, "nodeCreated", {
+          stepKey: "codeGen",
+          title: "Code Generation",
           status: "queued",
         });
-      }
+        this.emitEvent(projectId, packId, codeGenId, "nodeStarted", {
+          stepKey: "codeGen",
+          title: "Code Generation",
+          status: "running",
+        });
 
-      let capturedCount = 0;
-      let failedCount = 0;
+        // ── PatchPlanner (iteration > 0) ─────────────────────
+        currentPatchPlan = undefined;
+        if (iter > 0 && previousScore) {
+          const lockedIds = lockManager.getLockedNodeIds();
+          const rawPlan = patchPlanner.plan(
+            previousScore,
+            targetIr.nodes,
+            lockedIds
+          );
+          currentPatchPlan = {
+            ...rawPlan,
+            lockedNodeIds: Array.from(lockedIds),
+          } as PatchPlan & { lockedNodeIds: string[] };
 
-      const screenshotService = new ScreenshotService();
-      const screenshotResults = await screenshotService.capture({
-        projectId,
-        runId,
-        previewUrl,
-        route: manifestTarget.route,
-        breakpoints: manifest.breakpoints,
-        onProgress: (breakpointId, index, total) => {
-          const nodeId = `${screenshotId}-${breakpointId}`;
-          this.emitEvent(projectId, packId, nodeId, "nodeStarted", {
+          // Emit focus area to trace
+          const lockedMsg = lockedIds.size > 0 ? ` (${lockedIds.size} locked)` : "";
+          this.emitEvent(projectId, packId, iterId, "nodeProgress", {
+            focusArea: currentPatchPlan.focusArea,
+            message: `Focus: ${currentPatchPlan.focusArea} — targeting ${currentPatchPlan.topTargets.length} node(s)${lockedMsg}`,
+          });
+        }
+
+        this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
+          message: iter > 0 ? "Building prompt with feedback..." : "Building prompt...",
+          progressPct: 20,
+        });
+
+        // Read previously generated code for feedback (iteration > 0)
+        let previousCode: string | undefined;
+        if (iter > 0) {
+          const pagePath = join(workspacePath, "src", manifestTarget.entry.fileHint);
+          try { previousCode = await readFile(pagePath, "utf-8"); } catch { /* may not exist */ }
+        }
+
+        const { system, user } = buildCodeGenPrompt({
+          projectName: manifest.projectName,
+          targetId,
+          route: manifestTarget.route,
+          fileHint: manifestTarget.entry.fileHint,
+          nodes: targetIr.nodes,
+          breakpoints: manifest.breakpoints,
+          existingLayout,
+          existingGlobalsCss,
+          iterationIndex: iter,
+          previousCode,
+          previousScore: previousScore ?? undefined,
+          patchPlan: currentPatchPlan,
+          overflowIssues: lastOverflowIssues.length > 0 ? lastOverflowIssues : undefined,
+        });
+
+        this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
+          message: "Calling Claude API...",
+          progressPct: 30,
+        });
+
+        if (this.stopped) return;
+
+        const response = await client.messages.create(
+          { model: MODEL, max_tokens: MAX_TOKENS, system, messages: [{ role: "user", content: user }] },
+          { signal: this.abortController.signal }
+        );
+
+        if (this.stopped) return;
+
+        const responseText = response.content
+          .filter((block) => block.type === "text")
+          .map((block) => (block.type === "text" ? block.text : ""))
+          .join("");
+
+        this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
+          message: "Parsing response...",
+          progressPct: 80,
+        });
+
+        const generatedFiles = parseGeneratedFiles(responseText);
+
+        this.emitEvent(projectId, packId, codeGenId, "nodeProgress", {
+          message: `Writing ${generatedFiles.length} files...`,
+          progressPct: 90,
+        });
+
+        for (const file of generatedFiles) {
+          const fullPath = join(workspacePath, file.path);
+          await mkdir(dirname(fullPath), { recursive: true });
+          await writeFile(fullPath, file.content, "utf-8");
+        }
+
+        if (this.stopped) return;
+
+        this.emitEvent(projectId, packId, codeGenId, "nodeFinished", {
+          status: "success",
+          message: `Generated ${generatedFiles.length} file${generatedFiles.length === 1 ? "" : "s"}`,
+        });
+
+        for (const file of generatedFiles) {
+          this.emitEvent(projectId, packId, codeGenId, "artifactAdded", {
+            artifact: {
+              id: `iter${iter}-file-${file.path.replace(/\//g, "-")}`,
+              kind: "workspaceFile",
+              label: file.path,
+              href: file.path,
+            },
+          });
+        }
+
+        // ── Screenshot Capture ────────────────────────────────
+        currentStep = "screenshot";
+        const screenshotId = `${iterId}-screenshot`;
+
+        this.emitEvent(projectId, packId, screenshotId, "nodeCreated", {
+          stepKey: "screenshot",
+          title: "Screenshot Capture",
+          status: "queued",
+        });
+        this.emitEvent(projectId, packId, screenshotId, "nodeStarted", {
+          stepKey: "screenshot",
+          title: "Screenshot Capture",
+          status: "running",
+        });
+
+        this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+          message: "Waiting for preview server...",
+          progressPct: 10,
+        });
+
+        const previewUrl = await this.waitForPreview(
+          options.previewProvider,
+          projectId,
+          workspacePath
+        );
+
+        if (this.stopped) return;
+
+        this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+          message: "Waiting for route to compile...",
+          progressPct: 15,
+        });
+
+        await this.warmUpRoute(previewUrl, manifestTarget.route);
+
+        if (this.stopped) return;
+
+        this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+          message: `Launching browser for ${manifest.breakpoints.length} breakpoint(s)...`,
+          progressPct: 20,
+        });
+
+        for (const bp of manifest.breakpoints) {
+          this.emitEvent(projectId, packId, `${screenshotId}-${bp.breakpointId}`, "nodeCreated", {
             stepKey: "capture",
-            title: `${breakpointId}`,
+            title: `${bp.breakpointId} (${bp.width}×${bp.height})`,
+            status: "queued",
+          });
+        }
+
+        let capturedCount = 0;
+        let failedCount = 0;
+
+        const screenshotResults = await screenshotService.capture({
+          projectId,
+          runId,
+          previewUrl,
+          route: manifestTarget.route,
+          breakpoints: manifest.breakpoints,
+          onProgress: (breakpointId, index, total) => {
+            this.emitEvent(projectId, packId, `${screenshotId}-${breakpointId}`, "nodeStarted", {
+              stepKey: "capture",
+              title: breakpointId,
+              status: "running",
+            });
+            this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
+              message: `Capturing ${breakpointId} (${index + 1}/${total})...`,
+              progressPct: 20 + Math.round(((index + 1) / total) * 70),
+            });
+          },
+          onCaptured: (breakpointId, result, error) => {
+            const nodeId = `${screenshotId}-${breakpointId}`;
+            if (result) {
+              capturedCount++;
+              this.emitEvent(projectId, packId, nodeId, "nodeFinished", {
+                status: "success",
+                message: `${(result.sizeBytes / 1024).toFixed(0)} KB`,
+              });
+              this.emitEvent(projectId, packId, nodeId, "artifactAdded", {
+                artifact: {
+                  id: `iter${iter}-screenshot-${breakpointId}`,
+                  kind: "snapshotImage",
+                  label: `${breakpointId}.png`,
+                  href: `/api/projects/${projectId}/artifacts/screenshots/${runId}/${breakpointId}.png`,
+                  mime: "image/png",
+                  sizeBytes: result.sizeBytes,
+                },
+              });
+            } else {
+              failedCount++;
+              this.emitEvent(projectId, packId, nodeId, "nodeFailed", {
+                status: "error",
+                message: error || "Capture failed",
+              });
+            }
+          },
+        });
+
+        if (this.stopped) return;
+
+        const captureMsg = failedCount > 0
+          ? `Captured ${capturedCount}/${capturedCount + failedCount}, ${failedCount} failed`
+          : `Captured ${capturedCount} screenshot(s)`;
+
+        this.emitEvent(projectId, packId, screenshotId, "nodeFinished", {
+          status: failedCount > 0 && capturedCount === 0 ? "error" : "success",
+          message: captureMsg,
+        });
+
+        // ── Overflow Detection ─────────────────────────────────
+        try {
+          const overflowReport = await overflowDetector.detect({
+            previewUrl,
+            route: manifestTarget.route,
+            viewportWidth: manifest.breakpoints[0]?.width ?? 1440,
+            viewportHeight: manifest.breakpoints[0]?.height ?? 900,
+          });
+
+          const overflowMsg = overflowReport.offenderCount > 0
+            ? `${overflowReport.offenderCount} overflow issue(s) found`
+            : "No overflow detected";
+
+          this.emitEvent(projectId, packId, `${iterId}-overflow`, "nodeCreated", {
+            stepKey: "overflow",
+            title: "Overflow Check",
             status: "running",
           });
-          const pct = 20 + Math.round(((index + 1) / total) * 70);
-          this.emitEvent(projectId, packId, screenshotId, "nodeProgress", {
-            message: `Capturing ${breakpointId} (${index + 1}/${total})...`,
-            progressPct: pct,
+          this.emitEvent(projectId, packId, `${iterId}-overflow`, "nodeFinished", {
+            status: overflowReport.offenderCount > 0 ? "error" : "success",
+            message: overflowMsg,
           });
-        },
-        onCaptured: (breakpointId, result, error) => {
-          const nodeId = `${screenshotId}-${breakpointId}`;
-          if (result) {
-            capturedCount++;
-            this.emitEvent(projectId, packId, nodeId, "nodeFinished", {
-              status: "success",
-              message: `${(result.sizeBytes / 1024).toFixed(0)} KB`,
-            });
-            // Emit artifact link under the child node
-            this.emitEvent(projectId, packId, nodeId, "artifactAdded", {
+
+          // Feed overflow issues into the next iteration's prompt
+          lastOverflowIssues = overflowReport.offenders.slice(0, 10).map((o) => ({
+            selector: o.selector,
+            nodeId: o.nodeId,
+            overflowPx: o.overflowPx,
+          }));
+
+          // Store overflow report as artifact (emit summary in trace)
+          if (overflowReport.offenderCount > 0) {
+            const reportJson = JSON.stringify(overflowReport, null, 2);
+            const reportPath = join(snapshotsDir(projectId, runId), `iter-${iter}-overflow.json`);
+            await writeFile(reportPath, reportJson, "utf-8");
+
+            this.emitEvent(projectId, packId, `${iterId}-overflow`, "artifactAdded", {
               artifact: {
-                id: `screenshot-${breakpointId}`,
-                kind: "snapshotImage",
-                label: `${breakpointId}.png`,
-                href: `/api/projects/${projectId}/artifacts/screenshots/${runId}/${breakpointId}.png`,
-                mime: "image/png",
-                sizeBytes: result.sizeBytes,
+                id: `iter${iter}-overflow-report`,
+                kind: "overflowReport",
+                label: "Overflow Report",
+                href: `/api/projects/${projectId}/artifacts/screenshots/${runId}/iter-${iter}-overflow.json`,
+                mime: "application/json",
               },
             });
-          } else {
-            failedCount++;
-            this.emitEvent(projectId, packId, nodeId, "nodeFailed", {
-              status: "error",
-              message: error || "Capture failed",
-            });
           }
-        },
-      });
+        } catch (overflowErr) {
+          console.warn(`[AiExecutor] Overflow detection failed for iter ${iter}:`, overflowErr);
+        }
 
-      if (this.stopped) return;
+        // ── Visual Scoring ────────────────────────────────────
+        currentStep = "scoring";
+        const scoringId = `${iterId}-scoring`;
 
-      const totalMsg = failedCount > 0
-        ? `Captured ${capturedCount}/${capturedCount + failedCount} screenshot(s), ${failedCount} failed`
-        : `Captured ${capturedCount} screenshot(s)`;
-      const overallStatus = failedCount > 0 && capturedCount === 0 ? "error" : "success";
+        this.emitEvent(projectId, packId, scoringId, "nodeCreated", {
+          stepKey: "scoring",
+          title: "Visual Scoring",
+          status: "queued",
+        });
+        this.emitEvent(projectId, packId, scoringId, "nodeStarted", {
+          stepKey: "scoring",
+          title: "Visual Scoring",
+          status: "running",
+        });
 
-      this.emitEvent(projectId, packId, screenshotId, "nodeFinished", {
-        status: overallStatus,
-        message: totalMsg,
-      });
+        if (this.stopped) return;
 
-      // ── Scoring step (stub) ─────────────────────────────────────
-      currentStep = "scoring";
-      this.emitEvent(projectId, packId, scoringId, "nodeCreated", {
-        stepKey: "scoring",
-        title: "Visual Scoring",
-        status: "queued",
-      });
-      this.emitEvent(projectId, packId, scoringId, "nodeStarted", {
-        stepKey: "scoring",
-        title: "Visual Scoring",
-        status: "running",
-      });
+        const scoringInputs = screenshotResults.map((sr) => ({
+          screenshotPath: sr.filePath,
+          baselinePath: join(baselinesRoot, targetId, sr.breakpointId, `${stateId}.png`),
+          breakpointId: sr.breakpointId,
+          irNodes: targetIr.nodes,
+          signal: this.abortController!.signal,
+        }));
 
-      await delay(500);
-      if (this.stopped) return;
+        for (const input of scoringInputs) {
+          this.emitEvent(projectId, packId, `${scoringId}-${input.breakpointId}`, "nodeCreated", {
+            stepKey: "score",
+            title: input.breakpointId,
+            status: "queued",
+          });
+        }
 
-      const stubScore = {
-        overall: 0.82,
-        layout: 0.85,
-        style: 0.78,
-        a11y: 0.9,
-        perceptual: 0.75,
-      };
+        this.emitEvent(projectId, packId, scoringId, "nodeProgress", {
+          message: `Scoring ${scoringInputs.length} breakpoint(s) with Claude Vision...`,
+          progressPct: 10,
+        });
 
-      this.emitEvent(projectId, packId, scoringId, "nodeFinished", {
-        status: "success",
-        message: `Score: ${stubScore.overall} (stub)`,
-        score: stubScore,
-      });
+        let scoredCount = 0;
+        const aggregateScore = await scoringService.scoreAll(scoringInputs, (bpScore) => {
+          scoredCount++;
+          const nodeId = `${scoringId}-${bpScore.breakpointId}`;
+          this.emitEvent(projectId, packId, nodeId, "nodeStarted", {
+            stepKey: "score",
+            title: bpScore.breakpointId,
+            status: "running",
+          });
+          this.emitEvent(projectId, packId, nodeId, "nodeFinished", {
+            status: "success",
+            message: `Score: ${bpScore.overall}`,
+            score: { overall: bpScore.overall, layout: bpScore.layout, style: bpScore.style, a11y: bpScore.a11y, perceptual: bpScore.perceptual },
+          });
+          this.emitEvent(projectId, packId, scoringId, "nodeProgress", {
+            message: `Scored ${scoredCount}/${scoringInputs.length} breakpoint(s)...`,
+            progressPct: 10 + Math.round((scoredCount / scoringInputs.length) * 85),
+          });
+        });
+
+        if (this.stopped) return;
+
+        finalScore = {
+          overall: aggregateScore.overall,
+          layout: aggregateScore.layout,
+          style: aggregateScore.style,
+          a11y: aggregateScore.a11y,
+          perceptual: aggregateScore.perceptual,
+        };
+
+        const delta = previousScore ? finalScore.overall - previousScore.overall : undefined;
+        const scoreWithDelta = delta !== undefined
+          ? { ...finalScore, deltaFromPrev: Math.round(delta * 100) / 100 }
+          : finalScore;
+
+        this.emitEvent(projectId, packId, scoringId, "nodeFinished", {
+          status: "success",
+          message: `Score: ${finalScore.overall}`,
+          score: scoreWithDelta,
+        });
+
+        // ── Update freeze locks based on aggregate scores ──────
+        lockManager.updateLocksFromAggregate(
+          { layout: finalScore.layout, style: finalScore.style },
+          targetIr.nodes
+        );
+
+        // ── Scorekeeper decision ────────────────────────────────
+        const decision = scorekeeper.decide(finalScore.overall, iter);
+
+        // ── Workspace snapshot (internal — used by click-to-focus) ──
+        try {
+          await createSnapshot(projectId, iter, workspacePath);
+        } catch (snapErr) {
+          console.warn(`[AiExecutor] Snapshot failed for iter ${iter}:`, snapErr);
+        }
+
+        if (decision.accepted) {
+          // Accepted — this iteration becomes the new best
+          consecutiveRejections = 0;
+          acceptedScoreHistory.push(finalScore.overall);
+          previousScore = finalScore;
+
+          const thresholdMet = finalScore.overall >= threshold;
+          const iterMsg = thresholdMet
+            ? `Score ${finalScore.overall} >= ${threshold} — threshold met!`
+            : `Score ${finalScore.overall} — accepted (best so far)`;
+
+          this.emitEvent(projectId, packId, iterId, "nodeFinished", {
+            status: "success",
+            message: iterMsg,
+            score: scoreWithDelta,
+            decision: { accepted: true, reason: decision.reason },
+            isBest: true,
+          });
+
+          if (thresholdMet) break;
+        } else {
+          // Rejected — restore workspace from best snapshot
+          consecutiveRejections++;
+
+          const iterMsg = `Score ${finalScore.overall} — rejected (${decision.reason}), reverting to iteration ${decision.bestIterationIndex + 1}`;
+
+          this.emitEvent(projectId, packId, iterId, "nodeFinished", {
+            status: "success",
+            message: iterMsg,
+            score: scoreWithDelta,
+            decision: { accepted: false, reason: decision.reason },
+          });
+
+          // Restore workspace to best iteration state
+          if (decision.bestIterationIndex >= 0) {
+            try {
+              await restoreSnapshot(projectId, decision.bestIterationIndex, workspacePath);
+              console.log(`[AiExecutor] Restored workspace to iteration ${decision.bestIterationIndex}`);
+            } catch (restoreErr) {
+              console.error(`[AiExecutor] Failed to restore snapshot for iter ${decision.bestIterationIndex}:`, restoreErr);
+            }
+          }
+          // Do NOT update previousScore — keep the best score for feedback
+        }
+
+        // ── Stop conditions ───────────────────────────────────
+        const stopResult = stopConditions.shouldStop({
+          iteration: iter,
+          acceptedScoreHistory,
+          consecutiveRejections,
+          startTime: runStartTime,
+        });
+        if (stopResult.stop) {
+          this.emitEvent(projectId, packId, iterId, "nodeProgress", {
+            message: `Stopping: ${stopResult.reason}`,
+          });
+          break;
+        }
+      }
 
       // ── Root finished ───────────────────────────────────────────
+      const bestState = scorekeeper.getState();
+      const thresholdMet = bestState.bestScore >= threshold;
+      const lastStop = stopConditions.shouldStop({
+        iteration: maxIterations - 1,
+        acceptedScoreHistory,
+        consecutiveRejections,
+        startTime: runStartTime,
+      });
+      const stopReason = thresholdMet ? "threshold met" : (lastStop.stop ? lastStop.reason : "max iterations");
       this.emitEvent(projectId, packId, rootId, "nodeFinished", {
         status: "success",
-        message: `Run complete — score: ${stubScore.overall} (stub scoring)`,
-        score: stubScore,
+        message: `Run complete — best score: ${bestState.bestScore} (iteration ${bestState.bestIterationIndex + 1}, ${stopReason})`,
+        score: { overall: bestState.bestScore, layout: finalScore.layout, style: finalScore.style, a11y: finalScore.a11y, perceptual: finalScore.perceptual },
       });
 
       this.emit("done", "success");
     } catch (error) {
-      if (this.stopped) return; // stop() already emitted done
+      if (this.stopped) return;
 
-      const message =
-        error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
       console.error(`[AiExecutor] Error in step "${currentStep}":`, message);
       if (error instanceof Error && error.stack) {
         console.error("[AiExecutor] Stack:", error.stack);
       }
 
-      // Fail the node corresponding to the current step
-      const failNodeId =
-        currentStep === "screenshot"
-          ? screenshotId
-          : currentStep === "scoring"
-            ? scoringId
-            : codeGenId;
-
-      this.emitEvent(projectId, packId, failNodeId, "nodeFailed", {
+      this.emitEvent(projectId, packId, currentIterNodeId, "nodeFailed", {
         status: "error",
         message,
       });

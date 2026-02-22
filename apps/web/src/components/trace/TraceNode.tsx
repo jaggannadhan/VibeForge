@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { IterationNode, ArtifactLink } from "@vibe-studio/shared";
-import { ChevronRight, ChevronDown, FileDown } from "lucide-react";
+import { ChevronRight, ChevronDown, FileDown, Eye, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "@/components/common/Badge";
 import { Spinner } from "@/components/common/Spinner";
@@ -13,6 +13,7 @@ interface TraceNodeProps {
   depth?: number;
   defaultExpanded?: boolean;
   onArtifactClick?: (artifact: ArtifactLink) => void;
+  onIterationClick?: (iterationIndex: number) => void;
 }
 
 function formatDuration(start?: string, end?: string): string | null {
@@ -29,24 +30,40 @@ function formatScore(score?: number): string {
   return `${(score * 100).toFixed(0)}%`;
 }
 
-export function TraceNode({ node, depth = 0, defaultExpanded = true, onArtifactClick }: TraceNodeProps) {
+export function TraceNode({ node, depth = 0, defaultExpanded = true, onArtifactClick, onIterationClick }: TraceNodeProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const hasChildren = node.children && node.children.length > 0;
   const isRunning = node.status === "running";
   const paddingLeft = 8 + depth * 16;
+
+  // Iteration nodes are clickable when completed (not running)
+  const isIterationNode = node.stepKey === "iteration";
+  const isClickable = isIterationNode && !isRunning && (node.status === "success" || node.status === "error");
+
+  const handleRowClick = () => {
+    if (isClickable && onIterationClick) {
+      onIterationClick(node.iterationIndex);
+    }
+  };
 
   return (
     <div>
       <div
         className={cn(
           "flex items-start gap-2 py-1.5 pr-3 text-sm hover:bg-accent/30 transition-colors",
-          isRunning && "bg-blue-50/50"
+          isRunning && "bg-blue-50/50",
+          isClickable && "cursor-pointer hover:bg-accent/50",
+          isIterationNode && node.decision && !node.decision.accepted && "opacity-60"
         )}
         style={{ paddingLeft }}
+        onClick={handleRowClick}
       >
         {/* Expand/collapse toggle */}
         <button
-          onClick={() => hasChildren && setExpanded(!expanded)}
+          onClick={(e) => {
+            e.stopPropagation();
+            hasChildren && setExpanded(!expanded);
+          }}
           className={cn(
             "shrink-0 mt-0.5",
             hasChildren ? "cursor-pointer" : "invisible"
@@ -74,14 +91,48 @@ export function TraceNode({ node, depth = 0, defaultExpanded = true, onArtifactC
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-medium truncate">{node.title}</span>
+            {/* Best star marker */}
+            {node.isBest && (
+              <Star size={12} className="shrink-0 text-amber-500 fill-amber-500" />
+            )}
+            <span className={cn("font-medium truncate", isIterationNode && node.decision && !node.decision.accepted && "text-muted-foreground")}>{node.title}</span>
             <StatusBadge status={node.status} />
+            {/* Accept/Reject badge */}
+            {isIterationNode && node.decision && (
+              <span className={cn(
+                "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold shrink-0",
+                node.decision.accepted
+                  ? "bg-green-100 text-green-700"
+                  : "bg-red-100 text-red-700"
+              )}>
+                {node.decision.accepted ? "Accepted" : "Rejected"}
+              </span>
+            )}
+            {isClickable && (
+              <Eye size={12} className="text-muted-foreground/50 shrink-0" />
+            )}
             {node.score?.overall !== undefined && (
               <span className="text-xs text-muted-foreground ml-auto shrink-0">
                 {formatScore(node.score.overall)}
               </span>
             )}
           </div>
+
+          {/* Focus area chip */}
+          {isIterationNode && node.focusArea && (
+            <div className="mt-0.5">
+              <span className={cn(
+                "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium",
+                node.focusArea === "layout" && "bg-blue-100 text-blue-700",
+                node.focusArea === "style" && "bg-purple-100 text-purple-700",
+                node.focusArea === "a11y" && "bg-orange-100 text-orange-700",
+                node.focusArea === "perceptual" && "bg-teal-100 text-teal-700",
+                !["layout", "style", "a11y", "perceptual"].includes(node.focusArea) && "bg-gray-100 text-gray-700"
+              )}>
+                Focus: {node.focusArea}
+              </span>
+            </div>
+          )}
 
           {/* Message */}
           {node.message && (
@@ -111,7 +162,10 @@ export function TraceNode({ node, depth = 0, defaultExpanded = true, onArtifactC
               {node.artifacts.map((artifact) => (
                 <button
                   key={artifact.id}
-                  onClick={() => onArtifactClick?.(artifact)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onArtifactClick?.(artifact);
+                  }}
                   className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer transition-colors"
                 >
                   <FileDown size={10} />
@@ -140,6 +194,7 @@ export function TraceNode({ node, depth = 0, defaultExpanded = true, onArtifactC
             depth={depth + 1}
             defaultExpanded={defaultExpanded}
             onArtifactClick={onArtifactClick}
+            onIterationClick={onIterationClick}
           />
         ))}
     </div>

@@ -27,6 +27,7 @@ export type {
   ArtifactKind,
   ArtifactLink,
   TraceStatus,
+  IterationDecision,
   IterationNode,
   AgentEvent,
 } from "./contracts/events";
@@ -69,4 +70,11 @@ export type {
   StartRunRequest,
   StartRunResponse,
   GetRunReportResponse,
+  IterationSummary,
+  GetIterationsResponse,
+  StartHistoricalPreviewResponse,
+  GetLatestPreviewResponse,
+  GetRunStateResponse,
+  RevertToBestResponse,
+  GetIterationDecisionResponse,
 } from "./contracts/api";

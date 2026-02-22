@@ -4,8 +4,18 @@ import { useState, useEffect, useCallback } from "react";
 import type { ArtifactLink } from "@vibe-studio/shared";
 import { ProjectHeader } from "./ProjectHeader";
 import { ThreePaneLayout } from "./ThreePaneLayout";
+import { FullscreenPreview } from "./FullscreenPreview";
 import { Spinner } from "@/components/common/Spinner";
-import { createProject, uploadDesignPack, startRun, stopRun } from "@/lib/api";
+import {
+  createProject,
+  uploadDesignPack,
+  startRun,
+  stopRun,
+  startHistoricalPreview,
+  getHistoricalPreviewStatus,
+  warmupHistoricalPreview,
+  getLatestPreview,
+} from "@/lib/api";
 
 interface ProjectWorkspaceProps {
   initialProjectId: string;
@@ -36,12 +46,127 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
   const [targetRoute, setTargetRoute] = useState("/");
   const [viewingArtifact, setViewingArtifact] = useState<ArtifactLink | null>(null);
 
+  // Historical preview state
+  const [previewMode, setPreviewMode] = useState<"latest" | "iteration">("latest");
+  const [pinnedIterationId, setPinnedIterationId] = useState<number | null>(null);
+  const [overridePreviewUrl, setOverridePreviewUrl] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenUrl, setFullscreenUrl] = useState<string | null>(null);
+  const [bestIterationId, setBestIterationId] = useState<number | null>(null);
+
   const handleArtifactClick = useCallback((artifact: ArtifactLink) => {
     setViewingArtifact(artifact);
   }, []);
 
   const handleCloseArtifact = useCallback(() => {
     setViewingArtifact(null);
+  }, []);
+
+  const [historicalLoading, setHistoricalLoading] = useState(false);
+
+  const handleIterationClick = useCallback(
+    async (iterationIndex: number) => {
+      if (!projectId) return;
+      try {
+        setHistoricalLoading(true);
+        setPreviewMode("iteration");
+        setPinnedIterationId(iterationIndex);
+        setOverridePreviewUrl(null); // clear while loading
+
+        // Kick off the historical preview server
+        const result = await startHistoricalPreview(projectId, iterationIndex);
+
+        let previewUrl: string | null = null;
+
+        if (result.status === "ready") {
+          previewUrl = result.previewUrl;
+        } else {
+          // Poll until the preview server is ready (or fails)
+          const MAX_POLLS = 90; // 90 × 2s = 3 minutes max
+          for (let i = 0; i < MAX_POLLS; i++) {
+            await new Promise((r) => setTimeout(r, 2000));
+            try {
+              const status = await getHistoricalPreviewStatus(projectId, iterationIndex);
+              if (status.status === "ready") {
+                previewUrl = status.previewUrl;
+                break;
+              }
+              if (status.status === "error" || status.status === "stopped") {
+                console.error("Historical preview failed:", status);
+                return;
+              }
+            } catch {
+              // Ignore transient fetch errors, keep polling
+            }
+          }
+        }
+
+        if (!previewUrl) {
+          console.error("Historical preview timed out — no URL");
+          return;
+        }
+
+        // Wait for the route to compile via the backend warmup endpoint.
+        // The frontend can't check HTTP status codes directly due to CORS
+        // (no-cors returns opaque responses that hide 404 vs 200).
+        try {
+          await warmupHistoricalPreview(projectId, iterationIndex, targetRoute);
+        } catch (warmupErr) {
+          console.warn("Warmup request failed, proceeding anyway:", warmupErr);
+        }
+
+        setOverridePreviewUrl(previewUrl);
+      } catch (err) {
+        console.error("Failed to start historical preview:", err);
+      } finally {
+        setHistoricalLoading(false);
+      }
+    },
+    [projectId, targetRoute]
+  );
+
+  const handleRefreshLatest = useCallback(async () => {
+    if (!projectId) return;
+    setPreviewMode("latest");
+    setPinnedIterationId(null);
+    setOverridePreviewUrl(null);
+    setPreviewRefreshKey((prev) => prev + 1);
+  }, [projectId]);
+
+  const handleFullscreen = useCallback(async () => {
+    if (!projectId) return;
+    const route = targetRoute && targetRoute !== "/" ? targetRoute : "";
+    if (overridePreviewUrl) {
+      // Iteration mode — URL already known
+      setFullscreenUrl(overridePreviewUrl.replace(/\/$/, "") + route);
+      setIsFullscreen(true);
+    } else {
+      // Latest mode — fetch current preview URL
+      try {
+        const info = await getLatestPreview(projectId);
+        if (info.previewUrl) {
+          setFullscreenUrl(info.previewUrl.replace(/\/$/, "") + route);
+          setIsFullscreen(true);
+        }
+      } catch (err) {
+        console.error("Failed to get preview URL for fullscreen:", err);
+      }
+    }
+  }, [projectId, overridePreviewUrl, targetRoute]);
+
+  const handleExitFullscreen = useCallback(() => {
+    setIsFullscreen(false);
+    setFullscreenUrl(null);
+  }, []);
+
+  const handleViewBest = useCallback(() => {
+    if (bestIterationId != null) {
+      handleIterationClick(bestIterationId);
+    }
+  }, [bestIterationId, handleIterationClick]);
+
+  const handleBestUpdated = useCallback((newBestId: number | null) => {
+    setBestIterationId(newBestId);
   }, []);
 
   // Auto-create a real project for placeholder slugs
@@ -103,6 +228,10 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
     try {
       await startRun(projectId, activePackId);
       setRunActive(true);
+      // Reset to latest mode when a new run starts
+      setPreviewMode("latest");
+      setPinnedIterationId(null);
+      setOverridePreviewUrl(null);
     } catch (err) {
       console.error("Failed to start run:", err);
     }
@@ -194,8 +323,21 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
           viewingArtifact={viewingArtifact}
           onArtifactClick={handleArtifactClick}
           onCloseArtifact={handleCloseArtifact}
+          previewMode={previewMode}
+          pinnedIterationId={pinnedIterationId}
+          overridePreviewUrl={overridePreviewUrl}
+          onRefreshLatest={handleRefreshLatest}
+          onFullscreen={handleFullscreen}
+          onIterationClick={handleIterationClick}
+          bestIterationId={bestIterationId}
+          onViewBest={handleViewBest}
+          onBestUpdated={handleBestUpdated}
         />
       </div>
+
+      {isFullscreen && fullscreenUrl && (
+        <FullscreenPreview previewUrl={fullscreenUrl} onExit={handleExitFullscreen} />
+      )}
     </div>
   );
 }

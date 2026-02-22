@@ -23,6 +23,8 @@ interface PreviewProcess {
 }
 
 const TTL_MS = 30 * 60 * 1000; // 30 minutes
+const HISTORICAL_TTL_MS = 10 * 60 * 1000; // 10 minutes for historical previews
+const MAX_HISTORICAL_PREVIEWS = 2;
 const REAPER_INTERVAL_MS = 60 * 1000; // check every 60s
 
 /** Build a clean env for child processes, stripping tsx preload flags */
@@ -58,6 +60,7 @@ export interface SandboxManagerOptions {
 
 export class SandboxManager {
   private previews = new Map<string, PreviewProcess>();
+  private historicalPreviews = new Map<string, PreviewProcess>();
   private reaperInterval: ReturnType<typeof setInterval> | null = null;
   private templateDir: string | null;
 
@@ -65,6 +68,8 @@ export class SandboxManager {
     this.templateDir = options?.templateDir ?? null;
     this.reaperInterval = setInterval(() => this.reapIdle(), REAPER_INTERVAL_MS);
   }
+
+  // ── Latest preview (existing API) ──────────────────────────────────
 
   async startPreview(projectId: string, workspacePath: string): Promise<PreviewInfo> {
     // If already running/starting, return current status
@@ -117,17 +122,130 @@ export class SandboxManager {
     this.previews.delete(projectId);
   }
 
+  // ── Historical preview ─────────────────────────────────────────────
+
+  private historicalKey(projectId: string, iterationId: number): string {
+    return `${projectId}:iter:${iterationId}`;
+  }
+
+  async startHistoricalPreview(
+    projectId: string,
+    iterationId: number,
+    workspacePath: string
+  ): Promise<PreviewInfo> {
+    const key = this.historicalKey(projectId, iterationId);
+
+    // Reuse if already running/starting
+    const existing = this.historicalPreviews.get(key);
+    if (existing && existing.status !== "stopped" && existing.status !== "error") {
+      existing.lastAccessedAt = Date.now();
+      return this.toInfo(existing);
+    }
+
+    // Enforce LRU limit: evict oldest historical preview if at capacity
+    await this.evictHistoricalIfNeeded();
+
+    const port = await findFreePort();
+    const now = Date.now();
+
+    const proc: PreviewProcess = {
+      projectId,
+      workspacePath,
+      port,
+      childProcess: null,
+      status: "installing",
+      previewUrl: `http://localhost:${port}`,
+      startedAt: now,
+      lastAccessedAt: now,
+    };
+
+    this.historicalPreviews.set(key, proc);
+
+    // Run install + spawn asynchronously
+    this.installAndSpawn(proc).catch((err) => {
+      proc.status = "error";
+      proc.error = err instanceof Error ? err.message : String(err);
+    });
+
+    return this.toInfo(proc);
+  }
+
+  getHistoricalPreviewStatus(projectId: string, iterationId: number): PreviewInfo {
+    const key = this.historicalKey(projectId, iterationId);
+    const proc = this.historicalPreviews.get(key);
+    if (!proc) {
+      return { previewUrl: null, status: "stopped" };
+    }
+    proc.lastAccessedAt = Date.now();
+    return this.toInfo(proc);
+  }
+
+  async stopHistoricalPreview(projectId: string, iterationId: number): Promise<void> {
+    const key = this.historicalKey(projectId, iterationId);
+    const proc = this.historicalPreviews.get(key);
+    if (!proc) return;
+
+    this.killProcess(proc);
+    proc.status = "stopped";
+    this.historicalPreviews.delete(key);
+  }
+
+  async stopAllHistorical(projectId: string): Promise<void> {
+    const promises: Promise<void>[] = [];
+    for (const [key, proc] of this.historicalPreviews) {
+      if (proc.projectId === projectId) {
+        this.killProcess(proc);
+        proc.status = "stopped";
+        this.historicalPreviews.delete(key);
+      }
+    }
+    await Promise.all(promises);
+  }
+
+  // ── Cleanup ────────────────────────────────────────────────────────
+
   async stopAll(): Promise<void> {
     const promises: Promise<void>[] = [];
     for (const projectId of this.previews.keys()) {
       promises.push(this.stopPreview(projectId));
     }
+
+    for (const [key, proc] of this.historicalPreviews) {
+      this.killProcess(proc);
+      proc.status = "stopped";
+      this.historicalPreviews.delete(key);
+    }
+
     await Promise.all(promises);
 
     if (this.reaperInterval) {
       clearInterval(this.reaperInterval);
       this.reaperInterval = null;
     }
+  }
+
+  // ── Internal methods ───────────────────────────────────────────────
+
+  private async evictHistoricalIfNeeded(): Promise<void> {
+    // Count active (non-stopped, non-error) historical previews
+    const active: [string, PreviewProcess][] = [];
+    for (const [key, proc] of this.historicalPreviews) {
+      if (proc.status !== "stopped" && proc.status !== "error") {
+        active.push([key, proc]);
+      }
+    }
+
+    if (active.length < MAX_HISTORICAL_PREVIEWS) return;
+
+    // Sort by lastAccessedAt ascending (oldest first)
+    active.sort((a, b) => a[1].lastAccessedAt - b[1].lastAccessedAt);
+
+    // Evict the least recently used
+    const [evictKey, evictProc] = active[0];
+    console.log(`[sandbox] Evicting historical preview: ${evictKey}`);
+    this.killProcess(evictProc);
+    evictProc.status = "stopped";
+    this.historicalPreviews.delete(evictKey);
   }
 
   private async installAndSpawn(proc: PreviewProcess): Promise<void> {
@@ -268,11 +386,22 @@ export class SandboxManager {
 
   private reapIdle(): void {
     const now = Date.now();
+
+    // Reap latest previews
     for (const [projectId, proc] of this.previews) {
       if (proc.status === "ready" && now - proc.lastAccessedAt > TTL_MS) {
         console.log(`[sandbox] Reaping idle preview for project ${projectId}`);
         this.killProcess(proc);
         this.previews.delete(projectId);
+      }
+    }
+
+    // Reap historical previews (shorter TTL)
+    for (const [key, proc] of this.historicalPreviews) {
+      if (proc.status === "ready" && now - proc.lastAccessedAt > HISTORICAL_TTL_MS) {
+        console.log(`[sandbox] Reaping idle historical preview: ${key}`);
+        this.killProcess(proc);
+        this.historicalPreviews.delete(key);
       }
     }
   }

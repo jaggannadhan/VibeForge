@@ -14,7 +14,7 @@ export async function artifactRoutes(app: FastifyInstance): Promise<void> {
       const { projectId, runId, filename } = request.params;
 
       // Validate filename to prevent path traversal
-      if (!/^[a-z0-9-]+\.png$/.test(filename)) {
+      if (!/^[a-z0-9-]+\.(png|json)$/.test(filename)) {
         return reply.status(400).send({ error: "Invalid filename" });
       }
 
@@ -26,14 +26,15 @@ export async function artifactRoutes(app: FastifyInstance): Promise<void> {
       );
 
       if (!existsSync(filePath)) {
-        return reply.status(404).send({ error: "Screenshot not found" });
+        return reply.status(404).send({ error: "Artifact not found" });
       }
 
       const fileBuffer = await readFile(filePath);
       const fileStat = await stat(filePath);
+      const contentType = filename.endsWith(".json") ? "application/json" : "image/png";
 
       return reply
-        .header("Content-Type", "image/png")
+        .header("Content-Type", contentType)
         .header("Content-Length", fileStat.size)
         .header("Cache-Control", "public, max-age=31536000, immutable")
         .send(fileBuffer);

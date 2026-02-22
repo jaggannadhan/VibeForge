@@ -22,6 +22,16 @@ interface ThreePaneLayoutProps {
   viewingArtifact?: ArtifactLink | null;
   onArtifactClick?: (artifact: ArtifactLink) => void;
   onCloseArtifact?: () => void;
+  // Historical preview props
+  previewMode?: "latest" | "iteration";
+  pinnedIterationId?: number | null;
+  overridePreviewUrl?: string | null;
+  onRefreshLatest?: () => void;
+  onFullscreen?: () => void;
+  onIterationClick?: (iterationIndex: number) => void;
+  bestIterationId?: number | null;
+  onViewBest?: () => void;
+  onBestUpdated?: (bestIterationId: number | null) => void;
 }
 
 export function ThreePaneLayout({
@@ -36,6 +46,15 @@ export function ThreePaneLayout({
   viewingArtifact,
   onArtifactClick,
   onCloseArtifact,
+  previewMode,
+  pinnedIterationId,
+  overridePreviewUrl,
+  onRefreshLatest,
+  onFullscreen,
+  onIterationClick,
+  bestIterationId,
+  onViewBest,
+  onBestUpdated,
 }: ThreePaneLayoutProps) {
   return (
     <ResizablePanelGroup direction="horizontal" className="h-full w-full">
@@ -56,6 +75,13 @@ export function ThreePaneLayout({
           route={previewRoute}
           viewingArtifact={viewingArtifact}
           onCloseArtifact={onCloseArtifact}
+          previewMode={previewMode}
+          pinnedIterationId={pinnedIterationId}
+          overridePreviewUrl={overridePreviewUrl}
+          onRefreshLatest={onRefreshLatest}
+          onFullscreen={onFullscreen}
+          bestIterationId={bestIterationId}
+          onViewBest={onViewBest}
         />
       </ResizablePanel>
 
@@ -63,7 +89,14 @@ export function ThreePaneLayout({
 
       {/* Right pane — Agent Trace */}
       <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
-        <TracePane projectId={projectId} runActive={runActive} onRunComplete={onRunComplete} onArtifactClick={onArtifactClick} />
+        <TracePane
+          projectId={projectId}
+          runActive={runActive}
+          onRunComplete={onRunComplete}
+          onArtifactClick={onArtifactClick}
+          onIterationClick={onIterationClick}
+          onBestUpdated={onBestUpdated}
+        />
       </ResizablePanel>
     </ResizablePanelGroup>
   );

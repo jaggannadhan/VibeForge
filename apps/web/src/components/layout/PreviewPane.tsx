@@ -1,20 +1,32 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { Monitor, Play, Square, RefreshCw, Loader2, Package, Zap } from "lucide-react";
+import { useState, useEffect, useCallback, useRef, type KeyboardEvent } from "react";
+import { Monitor, Play, Square, RefreshCw, Maximize2, Loader2, Package, Zap, Smartphone, Tablet } from "lucide-react";
 import {
   startPreview,
   stopPreview,
   getPreviewStatus,
   type PreviewInfo,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 interface PreviewPaneProps {
   projectId: string;
   autoStart?: boolean;
   refreshKey?: number;
   route?: string;
+  /** When set, bypass normal polling and render this URL directly in the iframe */
+  overridePreviewUrl?: string | null;
+  onFullscreen?: () => void;
+  onRefreshLatest?: () => void;
 }
+
+type ViewportMode = "responsive" | "desktop" | "mobile";
+
+const VIEWPORT_PRESETS: Record<Exclude<ViewportMode, "responsive">, { width: number; height: number; label: string }> = {
+  desktop: { width: 1440, height: 900, label: "1440 × 900" },
+  mobile: { width: 390, height: 844, label: "390 × 844" },
+};
 
 const STATUS_LABELS: Record<PreviewInfo["status"], string> = {
   installing: "Installing dependencies...",
@@ -24,7 +36,7 @@ const STATUS_LABELS: Record<PreviewInfo["status"], string> = {
   error: "Error",
 };
 
-export function PreviewPane({ projectId, autoStart, refreshKey, route }: PreviewPaneProps) {
+export function PreviewPane({ projectId, autoStart, refreshKey, route, overridePreviewUrl, onFullscreen, onRefreshLatest }: PreviewPaneProps) {
   const [preview, setPreview] = useState<PreviewInfo>({
     previewUrl: null,
     status: "stopped",
@@ -33,6 +45,14 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route }: Preview
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevRefreshKey = useRef(refreshKey);
   const autoStartTriggered = useRef(false);
+
+  // Editable URL bar state
+  const [editableUrl, setEditableUrl] = useState("");
+  const [iframeSrcOverride, setIframeSrcOverride] = useState<string | null>(null);
+  const urlInputRef = useRef<HTMLInputElement>(null);
+
+  // Viewport mode state
+  const [viewportMode, setViewportMode] = useState<ViewportMode>("responsive");
 
   // Clean up polling on unmount
   useEffect(() => {
@@ -112,33 +132,206 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route }: Preview
   useEffect(() => {
     if (refreshKey !== undefined && refreshKey !== prevRefreshKey.current) {
       prevRefreshKey.current = refreshKey;
-      if (preview.status === "ready") {
+      if (preview.status === "ready" || overridePreviewUrl) {
         // The backend warmup step already ensured the route compiled,
         // but give a small buffer for any remaining HMR propagation
         const timer = setTimeout(handleRefresh, 2000);
         return () => clearTimeout(timer);
       }
     }
-  }, [refreshKey, preview.status, handleRefresh]);
+  }, [refreshKey, preview.status, overridePreviewUrl, handleRefresh]);
 
-  // Build the full iframe URL including the target route
-  const iframeSrc = preview.previewUrl
+  // Compute the current iframe src
+  const computedOverrideSrc = overridePreviewUrl
+    ? overridePreviewUrl.replace(/\/$/, "") + (route && route !== "/" ? route : "")
+    : null;
+  const computedLiveSrc = preview.previewUrl
     ? preview.previewUrl.replace(/\/$/, "") + (route && route !== "/" ? route : "")
     : null;
+  const currentDisplayUrl = iframeSrcOverride ?? computedOverrideSrc ?? computedLiveSrc;
+
+  // Sync the editable URL input when the underlying URL changes
+  const prevDisplayUrl = useRef<string | null>(null);
+  useEffect(() => {
+    if (currentDisplayUrl && currentDisplayUrl !== prevDisplayUrl.current) {
+      setEditableUrl(currentDisplayUrl);
+      setIframeSrcOverride(null);
+      prevDisplayUrl.current = currentDisplayUrl;
+    }
+  }, [currentDisplayUrl]);
+
+  // Handle Enter key in URL bar → navigate iframe
+  const handleUrlKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const url = editableUrl.trim();
+        if (url) {
+          setIframeSrcOverride(url);
+          // Also update the actual iframe
+          const iframe = document.querySelector<HTMLIFrameElement>(
+            "iframe[title='Live Preview']"
+          );
+          if (iframe) iframe.src = url;
+        }
+        urlInputRef.current?.blur();
+      }
+      if (e.key === "Escape") {
+        // Revert to current URL
+        setEditableUrl(currentDisplayUrl ?? "");
+        urlInputRef.current?.blur();
+      }
+    },
+    [editableUrl, currentDisplayUrl]
+  );
+
+  // Viewport mode selector (shared between override and live modes)
+  const viewportModeSelector = (
+    <span className="flex items-center gap-0.5 shrink-0 border-l pl-2 ml-1">
+      <button
+        onClick={() => setViewportMode("responsive")}
+        className={cn(
+          "rounded p-1 transition-colors",
+          viewportMode === "responsive" ? "bg-accent text-foreground" : "hover:bg-accent text-muted-foreground"
+        )}
+        title="Responsive"
+      >
+        <Tablet size={12} />
+      </button>
+      <button
+        onClick={() => setViewportMode("desktop")}
+        className={cn(
+          "rounded p-1 transition-colors",
+          viewportMode === "desktop" ? "bg-accent text-foreground" : "hover:bg-accent text-muted-foreground"
+        )}
+        title="Desktop (1440×900)"
+      >
+        <Monitor size={12} />
+      </button>
+      <button
+        onClick={() => setViewportMode("mobile")}
+        className={cn(
+          "rounded p-1 transition-colors",
+          viewportMode === "mobile" ? "bg-accent text-foreground" : "hover:bg-accent text-muted-foreground"
+        )}
+        title="Mobile (390×844)"
+      >
+        <Smartphone size={12} />
+      </button>
+    </span>
+  );
+
+  // Iframe renderer with viewport mode support
+  const renderIframe = (src: string) => {
+    if (viewportMode === "responsive") {
+      return (
+        <div className="flex-1">
+          <iframe
+            src={src}
+            className="h-full w-full border-0"
+            title="Live Preview"
+            sandbox="allow-scripts allow-same-origin"
+          />
+        </div>
+      );
+    }
+
+    const preset = VIEWPORT_PRESETS[viewportMode];
+    return (
+      <div className="flex-1 overflow-auto bg-muted/30 flex items-start justify-center p-4">
+        <div
+          className="shrink-0 border border-border rounded-md overflow-hidden shadow-sm bg-white"
+          style={{ width: preset.width, height: preset.height }}
+        >
+          <iframe
+            src={src}
+            style={{ width: preset.width, height: preset.height }}
+            className="border-0"
+            title="Live Preview"
+            sandbox="allow-scripts allow-same-origin"
+          />
+        </div>
+      </div>
+    );
+  };
+
+  // ── Override mode: directly show the override URL ──────────────────
+  if (overridePreviewUrl) {
+    const overrideSrc = iframeSrcOverride ?? computedOverrideSrc!;
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex items-center gap-2 border-b px-3 py-1.5">
+          <span className="flex items-center gap-1.5 text-xs text-amber-600 shrink-0">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+            Historical
+          </span>
+          <input
+            ref={urlInputRef}
+            type="text"
+            value={editableUrl}
+            onChange={(e) => setEditableUrl(e.target.value)}
+            onKeyDown={handleUrlKeyDown}
+            onFocus={(e) => e.target.select()}
+            className="flex-1 min-w-0 rounded bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground font-mono border border-transparent focus:border-border focus:bg-background focus:text-foreground outline-none transition-colors"
+            spellCheck={false}
+          />
+          <span className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={handleRefresh}
+              className="rounded p-1 hover:bg-accent transition-colors"
+              title="Refresh preview"
+            >
+              <RefreshCw size={12} className="text-muted-foreground" />
+            </button>
+            {onRefreshLatest && (
+              <button
+                onClick={onRefreshLatest}
+                className="rounded p-1 hover:bg-accent transition-colors"
+                title="Back to latest"
+              >
+                <Square size={12} className="text-muted-foreground" />
+              </button>
+            )}
+            {onFullscreen && (
+              <button
+                onClick={onFullscreen}
+                className="rounded p-1 hover:bg-accent transition-colors"
+                title="Fullscreen"
+              >
+                <Maximize2 size={12} className="text-muted-foreground" />
+              </button>
+            )}
+          </span>
+          {viewportModeSelector}
+        </div>
+        {renderIframe(overrideSrc)}
+      </div>
+    );
+  }
+
+  // Build the full iframe URL including the target route
+  const iframeSrc = iframeSrcOverride ?? computedLiveSrc;
 
   // ── Ready state: show iframe ──────────────────────────────────────
   if (preview.status === "ready" && iframeSrc) {
     return (
       <div className="flex h-full flex-col">
         <div className="flex items-center gap-2 border-b px-3 py-1.5">
-          <span className="flex items-center gap-1.5 text-xs text-green-600">
+          <span className="flex items-center gap-1.5 text-xs text-green-600 shrink-0">
             <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
             Live
           </span>
-          <span className="text-xs text-muted-foreground/60 truncate">
-            {iframeSrc}
-          </span>
-          <span className="ml-auto flex items-center gap-1">
+          <input
+            ref={urlInputRef}
+            type="text"
+            value={editableUrl}
+            onChange={(e) => setEditableUrl(e.target.value)}
+            onKeyDown={handleUrlKeyDown}
+            onFocus={(e) => e.target.select()}
+            className="flex-1 min-w-0 rounded bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground font-mono border border-transparent focus:border-border focus:bg-background focus:text-foreground outline-none transition-colors"
+            spellCheck={false}
+          />
+          <span className="flex items-center gap-1 shrink-0">
             <button
               onClick={handleRefresh}
               className="rounded p-1 hover:bg-accent transition-colors"
@@ -153,16 +346,19 @@ export function PreviewPane({ projectId, autoStart, refreshKey, route }: Preview
             >
               <Square size={12} className="text-muted-foreground" />
             </button>
+            {onFullscreen && (
+              <button
+                onClick={onFullscreen}
+                className="rounded p-1 hover:bg-accent transition-colors"
+                title="Fullscreen"
+              >
+                <Maximize2 size={12} className="text-muted-foreground" />
+              </button>
+            )}
           </span>
+          {viewportModeSelector}
         </div>
-        <div className="flex-1">
-          <iframe
-            src={iframeSrc}
-            className="h-full w-full border-0"
-            title="Live Preview"
-            sandbox="allow-scripts allow-same-origin"
-          />
-        </div>
+        {renderIframe(iframeSrc)}
       </div>
     );
   }

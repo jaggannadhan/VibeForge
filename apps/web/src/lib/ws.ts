@@ -76,12 +76,16 @@ function applyEvent(
       break;
     case "nodeProgress":
       node.message = event.payload.message;
+      if (event.payload.focusArea) node.focusArea = event.payload.focusArea;
       break;
     case "nodeFinished":
       node.status = event.payload.status || "success";
       node.finishedAt = event.ts;
       if (event.payload.message) node.message = event.payload.message;
       if (event.payload.score) node.score = event.payload.score;
+      if (event.payload.decision) node.decision = event.payload.decision;
+      if (event.payload.isBest !== undefined) node.isBest = event.payload.isBest;
+      if (event.payload.focusArea) node.focusArea = event.payload.focusArea;
       break;
     case "nodeFailed":
       node.status = "error";
@@ -104,6 +108,7 @@ function applyEvent(
 export interface TraceStreamState {
   tree: IterationNode | null;
   runStatus: "idle" | "running" | "success" | "error";
+  bestIterationId: number | null;
 }
 
 export function useTraceStream(
@@ -112,6 +117,7 @@ export function useTraceStream(
 ): TraceStreamState {
   const [tree, setTree] = useState<IterationNode | null>(null);
   const [runStatus, setRunStatus] = useState<TraceStreamState["runStatus"]>("idle");
+  const [bestIterationId, setBestIterationId] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const treeRef = useRef<IterationNode | null>(null);
 
@@ -122,6 +128,7 @@ export function useTraceStream(
       treeRef.current = null;
       setTree(null);
       setRunStatus("running");
+      setBestIterationId(null);
     }
     prevRunActive.current = runActive;
   }, [runActive]);
@@ -135,6 +142,14 @@ export function useTraceStream(
           const updated = applyEvent(treeRef.current, msg.event);
           treeRef.current = updated;
           setTree(updated);
+          // Track best iteration
+          if (msg.event.payload.isBest && msg.event.type === "nodeFinished") {
+            // Extract iteration index from nodeId (e.g., "root-iter2" → 2)
+            const match = msg.event.nodeId.match(/^root-iter(\d+)$/);
+            if (match) {
+              setBestIterationId(parseInt(match[1], 10));
+            }
+          }
           break;
         }
         case "runStarted":
@@ -184,5 +199,5 @@ export function useTraceStream(
     };
   }, [projectId, runActive, handleMessage]);
 
-  return { tree, runStatus };
+  return { tree, runStatus, bestIterationId };
 }

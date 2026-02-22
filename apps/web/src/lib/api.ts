@@ -4,6 +4,12 @@ import type {
   GetFileContentResponse,
   StartRunResponse,
   GetRunReportResponse,
+  GetIterationsResponse,
+  StartHistoricalPreviewResponse,
+  GetLatestPreviewResponse,
+  GetRunStateResponse,
+  RevertToBestResponse,
+  GetIterationDecisionResponse,
 } from "@vibe-studio/shared";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
@@ -157,5 +163,91 @@ export async function getRunReport(
 ): Promise<GetRunReportResponse> {
   const res = await fetch(`${API_URL}/projects/${projectId}/runs/report`);
   if (!res.ok) throw new Error(`Failed to get run report: ${res.status}`);
+  return res.json();
+}
+
+// ── Iterations & Historical Preview ──────────────────────────────────
+
+export async function getIterations(
+  projectId: string
+): Promise<GetIterationsResponse> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/iterations`);
+  if (!res.ok) throw new Error(`Failed to get iterations: ${res.status}`);
+  return res.json();
+}
+
+export async function startHistoricalPreview(
+  projectId: string,
+  iterationId: number
+): Promise<StartHistoricalPreviewResponse> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/iterations/${iterationId}/preview`,
+    { method: "POST" }
+  );
+  if (!res.ok) throw new Error(`Failed to start historical preview: ${res.status}`);
+  return res.json();
+}
+
+export async function getHistoricalPreviewStatus(
+  projectId: string,
+  iterationId: number
+): Promise<StartHistoricalPreviewResponse> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/iterations/${iterationId}/preview`
+  );
+  if (!res.ok) throw new Error(`Failed to get historical preview status: ${res.status}`);
+  return res.json();
+}
+
+export async function warmupHistoricalPreview(
+  projectId: string,
+  iterationId: number,
+  route?: string
+): Promise<{ ready: boolean; error?: string }> {
+  const params = route ? `?route=${encodeURIComponent(route)}` : "";
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/iterations/${iterationId}/preview/warmup${params}`,
+    { method: "POST" }
+  );
+  if (!res.ok) throw new Error(`Failed to warmup preview: ${res.status}`);
+  return res.json();
+}
+
+export async function getLatestPreview(
+  projectId: string
+): Promise<GetLatestPreviewResponse> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/preview/latest`);
+  if (!res.ok) throw new Error(`Failed to get latest preview: ${res.status}`);
+  return res.json();
+}
+
+// ── Run State & Convergence Controls ─────────────────────────────────
+
+export async function getRunState(
+  projectId: string
+): Promise<GetRunStateResponse> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/run-state`);
+  if (!res.ok) throw new Error(`Failed to get run state: ${res.status}`);
+  return res.json();
+}
+
+export async function revertToBest(
+  projectId: string
+): Promise<RevertToBestResponse> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/runs/revert-best`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`Failed to revert to best: ${res.status}`);
+  return res.json();
+}
+
+export async function getIterationDecision(
+  projectId: string,
+  iterationId: number
+): Promise<GetIterationDecisionResponse> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/iterations/${iterationId}/decision`
+  );
+  if (!res.ok) throw new Error(`Failed to get iteration decision: ${res.status}`);
   return res.json();
 }
