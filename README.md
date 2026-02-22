@@ -98,8 +98,8 @@ AgentDOM/
 
 ```bash
 # Clone the repository
-git clone <repo-url> AgentDOM
-cd AgentDOM
+git clone <repo-url>
+cd VibeForge
 
 # Install all dependencies
 pnpm install
