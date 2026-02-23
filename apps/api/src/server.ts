@@ -18,11 +18,21 @@ const PORT = 3001;
 const HOST = "127.0.0.1";
 
 async function main() {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error(
+      "\n\x1b[31m[server] ANTHROPIC_API_KEY is not set.\x1b[0m\n" +
+        "  Add it to apps/api/.env and restart the server.\n"
+    );
+    process.exit(1);
+  }
+
   const app = Fastify({ logger: true });
 
   // Sandbox manager — singleton for preview lifecycle
+  const resolvedTemplateDir = templateDir("nextjs-tailwind-shadcn");
+  console.log(`[server] Template dir resolved to: ${resolvedTemplateDir}`);
   const sandboxManager = new SandboxManager({
-    templateDir: templateDir("nextjs-tailwind-shadcn"),
+    templateDir: resolvedTemplateDir,
   });
 
   // Run service — singleton for run orchestration

@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp } from "node:fs/promises";
+import { cp, mkdir } from "node:fs/promises";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 export interface PreviewInfo {
   previewUrl: string | null;
@@ -66,6 +66,7 @@ export class SandboxManager {
 
   constructor(options?: SandboxManagerOptions) {
     this.templateDir = options?.templateDir ?? null;
+    console.log(`[sandbox] SandboxManager created — templateDir: ${this.templateDir}, exists: ${this.templateDir ? existsSync(this.templateDir) : false}`);
     this.reaperInterval = setInterval(() => this.reapIdle(), REAPER_INTERVAL_MS);
   }
 
@@ -251,9 +252,41 @@ export class SandboxManager {
   private async installAndSpawn(proc: PreviewProcess): Promise<void> {
     const packageJsonPath = join(proc.workspacePath, "package.json");
     if (!existsSync(packageJsonPath)) {
-      // Self-heal: copy template into empty workspace
+      console.log(`[sandbox] package.json missing at: ${packageJsonPath}`);
+      console.log(`[sandbox] templateDir: ${this.templateDir}`);
+      console.log(`[sandbox] templateDir exists: ${this.templateDir ? existsSync(this.templateDir) : "N/A (null)"}`);
+      // Self-heal: restore only root-level config files that Next.js needs.
+      // Do NOT blindly cp the whole template — that would clobber any
+      // AI-generated code already written under src/.
       if (this.templateDir && existsSync(this.templateDir)) {
-        await cp(this.templateDir, proc.workspacePath, { recursive: true });
+        const configFiles = [
+          "package.json",
+          "next.config.js",
+          "postcss.config.js",
+          "tailwind.config.ts",
+          "tsconfig.json",
+        ];
+        for (const file of configFiles) {
+          const src = join(this.templateDir, file);
+          const dest = join(proc.workspacePath, file);
+          if (existsSync(src) && !existsSync(dest)) {
+            await cp(src, dest);
+          }
+        }
+        // Ensure essential src/ files exist (Next.js won't start without layout.tsx)
+        const essentials = [
+          "src/app/layout.tsx",
+          "src/app/globals.css",
+          "src/lib/utils.ts",
+        ];
+        for (const rel of essentials) {
+          const src = join(this.templateDir, rel);
+          const dest = join(proc.workspacePath, rel);
+          if (existsSync(src) && !existsSync(dest)) {
+            await mkdir(dirname(dest), { recursive: true });
+            await cp(src, dest);
+          }
+        }
       } else {
         throw new Error("Workspace has no package.json and no template available to restore it");
       }

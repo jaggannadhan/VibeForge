@@ -30,6 +30,7 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
   const [projectId, setProjectId] = useState<string | null>(
     needsAutoCreate ? null : initialProjectId
   );
+  const [projectVerified, setProjectVerified] = useState(false);
   const [projectName, setProjectName] = useState("Untitled Project");
   const [fileTreeRefreshKey, setFileTreeRefreshKey] = useState(0);
   const [activeDesignDir, setActiveDesignDir] = useState<string | null>(null);
@@ -172,13 +173,18 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
     setBestIterationId(newBestId);
   }, []);
 
-  // Auto-create a real project for placeholder slugs, or verify existing project exists
+  // Auto-create a real project for placeholder slugs, or verify existing project exists.
+  // Nothing renders until projectVerified is true, preventing race conditions where
+  // FileTreePane/PreviewPane fire requests against a stale or missing project ID.
   useEffect(() => {
+    setProjectVerified(false);
+
     if (needsAutoCreate) {
       createProject("Dashboard App")
         .then((res) => {
           setProjectId(res.projectId);
           setProjectName(res.name);
+          setProjectVerified(true);
           window.history.replaceState(null, "", `/projects/${res.projectId}`);
         })
         .catch((err) => {
@@ -189,17 +195,19 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
       getProject(projectId)
         .then((meta) => {
           if (!meta) {
-            // Project was deleted — redirect to create a new one
+            // Project was deleted — recreate
             console.warn(`Project ${projectId} not found, creating a new one`);
             setProjectId(null);
             window.history.replaceState(null, "", "/projects/new");
             return createProject("Dashboard App").then((res) => {
               setProjectId(res.projectId);
               setProjectName(res.name);
+              setProjectVerified(true);
               window.history.replaceState(null, "", `/projects/${res.projectId}`);
             });
           }
           setProjectName(meta.name ?? "Untitled Project");
+          setProjectVerified(true);
         })
         .catch((err) => {
           console.error("Failed to verify project:", err);
@@ -256,13 +264,17 @@ export function ProjectWorkspace({ initialProjectId }: ProjectWorkspaceProps) {
     setPreviewRefreshKey((prev) => prev + 1);
   }, []);
 
-  // Show a loading state while the project is being created
-  if (!projectId) {
+  // Show a loading state until the project is created/verified on the backend.
+  // This prevents FileTreePane and PreviewPane from firing requests against
+  // a stale or non-existent project ID.
+  if (!projectId || !projectVerified) {
     return (
       <div className="flex h-screen w-screen items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Spinner size={24} />
-          <p className="text-sm text-muted-foreground">Creating project...</p>
+          <p className="text-sm text-muted-foreground">
+            {!projectId ? "Creating project..." : "Loading project..."}
+          </p>
         </div>
       </div>
     );

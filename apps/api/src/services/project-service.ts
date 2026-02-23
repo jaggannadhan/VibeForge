@@ -31,8 +31,15 @@ export async function createProject(
 
   // Copy starter template into workspace
   const tmplSrc = templateDir("nextjs-tailwind-shadcn");
+  const wsDest = workspaceDir(projectId);
   if (existsSync(tmplSrc)) {
-    await cp(tmplSrc, workspaceDir(projectId), { recursive: true });
+    try {
+      await cp(tmplSrc, wsDest, { recursive: true });
+    } catch (cpErr) {
+      console.error(`[project-service] Failed to copy template into workspace: ${cpErr}`);
+    }
+  } else {
+    console.warn(`[project-service] Template not found at ${tmplSrc}`);
   }
 
   const now = new Date().toISOString();
