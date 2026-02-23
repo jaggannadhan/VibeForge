@@ -1,7 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import type { SandboxManager } from "@vibe-studio/sandbox-runner";
+import { existsSync } from "node:fs";
+import { cp, mkdir } from "node:fs/promises";
+import { join, dirname } from "node:path";
 import { getProject } from "../services/project-service.js";
-import { workspaceDir } from "../lib/paths.js";
+import { workspaceDir, templateDir } from "../lib/paths.js";
 import { extractSnapshot, hasSnapshot, listSnapshots, restoreSnapshot } from "../services/snapshot-service.js";
 import type { RunService } from "../services/run-service.js";
 
@@ -22,6 +25,52 @@ export function previewRoutes(
         }
 
         const wsDir = workspaceDir(projectId);
+
+        // Self-heal: if workspace is missing package.json, restore only the
+        // root-level config files Next.js needs to boot.  We must NOT blindly
+        // cp the whole template — that would clobber AI-generated code in src/.
+        if (!existsSync(join(wsDir, "package.json"))) {
+          const tmplSrc = templateDir("nextjs-tailwind-shadcn");
+          if (existsSync(tmplSrc)) {
+            const configFiles = [
+              "package.json",
+              "next.config.js",
+              "postcss.config.js",
+              "tailwind.config.ts",
+              "tsconfig.json",
+            ];
+            for (const file of configFiles) {
+              const src = join(tmplSrc, file);
+              if (existsSync(src) && !existsSync(join(wsDir, file))) {
+                try {
+                  await cp(src, join(wsDir, file));
+                } catch (cpErr) {
+                  request.log.error(`Failed to restore ${file}: ${cpErr}`);
+                }
+              }
+            }
+            // Also ensure src/app/layout.tsx and globals.css exist (Next.js
+            // won't start without layout.tsx).  Only copy if missing.
+            const essentialDirs = [
+              { src: "src/app/layout.tsx", dest: "src/app/layout.tsx" },
+              { src: "src/app/globals.css", dest: "src/app/globals.css" },
+              { src: "src/lib/utils.ts", dest: "src/lib/utils.ts" },
+            ];
+            for (const { src, dest } of essentialDirs) {
+              const srcPath = join(tmplSrc, src);
+              const destPath = join(wsDir, dest);
+              if (existsSync(srcPath) && !existsSync(destPath)) {
+                try {
+                  await mkdir(dirname(destPath), { recursive: true });
+                  await cp(srcPath, destPath);
+                } catch (cpErr) {
+                  request.log.error(`Failed to restore ${dest}: ${cpErr}`);
+                }
+              }
+            }
+          }
+        }
+
         const info = await sandboxManager.startPreview(projectId, wsDir);
         return reply.send(info);
       }
