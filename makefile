@@ -34,12 +34,9 @@ setup:
 	$(call progress,100,"Setup complete!")
 	@printf "\n$(BOLD)$(GREEN)  Vibe Studio is ready.$(RESET)\n"
 	@printf "  1. Add your API key:  $(BOLD)apps/api/.env$(RESET)\n"
-	@printf "  2. Start dev server:  $(BOLD)make dev$(RESET)\n\n"
+	@printf "  2. Start dev server:  $(BOLD)make run-fe; make run-be$(RESET)\n\n"
 
 # ── Dev ────────────────────────────────────────────────
-
-dev:
-	pnpm dev
 
 run-fe:
 	pnpm -C apps/web dev
